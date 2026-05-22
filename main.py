@@ -1,4 +1,4 @@
-from flask import Flask, render_template_string, request, session
+from flask import Flask, render_template_string, request
 from flask_socketio import SocketIO, emit, join_room
 import os
 import hashlib
@@ -25,12 +25,19 @@ def init_db():
         room TEXT NOT NULL,
         username TEXT NOT NULL,
         text TEXT NOT NULL,
-        timestamp TIMESTAMP
+        timestamp TIMESTAMP,
+        read_status TEXT DEFAULT 'sent'
     )''')
     c.execute('''CREATE TABLE IF NOT EXISTS sessions (
         token TEXT PRIMARY KEY,
         username TEXT NOT NULL,
         expires_at TIMESTAMP
+    )''')
+    c.execute('''CREATE TABLE IF NOT EXISTS user_rooms (
+        username TEXT NOT NULL,
+        room TEXT NOT NULL,
+        last_read TIMESTAMP,
+        PRIMARY KEY (username, room)
     )''')
     conn.commit()
     conn.close()
@@ -44,7 +51,7 @@ HTML = """
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
-    <title>Shadow Chat — аккаунты</title>
+    <title>Shadow Chat — с галочками</title>
     <script src="https://cdn.socket.io/4.5.0/socket.io.min.js"></script>
     <style>
         *{margin:0;padding:0;box-sizing:border-box}
@@ -68,6 +75,7 @@ HTML = """
         .bubble{max-width:70%;padding:10px 14px;border-radius:20px;font-size:14px;line-height:1.4;word-break:break-word}
         .my-message .bubble{background:#6366f1;color:white}
         .other-message .bubble{background:#2d2f3e;color:#e2e8f0}
+        .message-info{font-size:10px;color:#7c8ba0;margin-top:4px;text-align:right}
         .input-area{display:flex;gap:8px;padding:16px;border-top:1px solid #2d2f3e;background:#0f0f14;display:none}
         .input-area input{flex:1;background:#1e1f2c;border:1px solid #2d2f3e;border-radius:40px;padding:12px;color:white;outline:none}
         .input-area button{background:#6366f1;border:none;border-radius:40px;padding:0 20px;color:white;font-weight:bold;cursor:pointer}
@@ -118,13 +126,21 @@ HTML = """
     const savedToken = localStorage.getItem('shadow_token');
     const savedUsername = localStorage.getItem('shadow_username');
     
-    function addMessage(text, isMy, username = '') {
+    function addMessage(text, isMy, username = '', readStatus = 'sent') {
         const div = document.createElement('div');
         div.className = `message ${isMy ? 'my-message' : 'other-message'}`;
         const bubble = document.createElement('div');
         bubble.className = 'bubble';
         if (!isMy && username) bubble.innerHTML = `<b>${escapeHtml(username)}</b><br>${escapeHtml(text)}`;
         else bubble.innerText = text;
+        
+        if (isMy) {
+            const info = document.createElement('div');
+            info.className = 'message-info';
+            info.innerText = readStatus === 'read' ? '✓✓' : '✓';
+            bubble.appendChild(info);
+        }
+        
         div.appendChild(bubble);
         messagesDiv.appendChild(div);
         messagesDiv.scrollTop = messagesDiv.scrollHeight;
@@ -143,7 +159,7 @@ HTML = """
         messagesDiv.innerHTML = '';
         for (let msg of history) {
             const isMy = (msg.username === currentUser);
-            addMessage(msg.text, isMy, isMy ? '' : msg.username);
+            addMessage(msg.text, isMy, isMy ? '' : msg.username, msg.read_status);
         }
     }
     
@@ -231,7 +247,19 @@ HTML = """
         
         socket.on('new_message', (data) => {
             const isMy = (data.username === currentUser);
-            addMessage(data.text, isMy, isMy ? '' : data.username);
+            addMessage(data.text, isMy, isMy ? '' : data.username, data.read_status);
+            if (!isMy && currentRoom === data.room) {
+                socket.emit('mark_read', { room: data.room });
+            }
+        });
+        
+        socket.on('read_receipt', ({ room, username }) => {
+            if (room === currentRoom) {
+                const msgs = document.querySelectorAll('.my-message .message-info');
+                msgs.forEach(info => {
+                    if (info.innerText === '✓') info.innerText = '✓✓';
+                });
+            }
         });
         
         socket.on('disconnect', () => {
@@ -314,7 +342,7 @@ def login():
         return {'success': False, 'error': 'Неверный логин или пароль'}
     
     token = secrets.token_urlsafe(32)
-    expires_at = datetime.now() + timedelta(days=365*10)  # Бессрочный токен (10 лет)
+    expires_at = datetime.now() + timedelta(days=365*10)
     
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
@@ -342,7 +370,6 @@ def auto_login():
         return {'success': False, 'error': 'Токен не найден'}
     
     username, expires_at = row
-    # Проверяем, не истёк ли токен (но у нас бессрочный, expires_at = 10 лет)
     if datetime.now() > datetime.fromisoformat(expires_at):
         return {'success': False, 'error': 'Токен истёк'}
     
@@ -356,13 +383,21 @@ def handle_join(data):
     
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
-    c.execute('SELECT username, text, timestamp FROM messages WHERE room = ? ORDER BY timestamp', (room,))
+    c.execute('SELECT username, text, timestamp, read_status FROM messages WHERE room = ? ORDER BY timestamp', (room,))
     rows = c.fetchall()
-    history = [{'username': r[0], 'text': r[1], 'timestamp': r[2]} for r in rows]
+    history = [{'username': r[0], 'text': r[1], 'timestamp': r[2], 'read_status': r[3]} for r in rows]
     conn.close()
     
+    # Обновляем статус прочитанных для сообщений, отправленных этому пользователю
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute('UPDATE messages SET read_status = "read" WHERE room = ? AND username != ? AND read_status = "sent"', (room, username))
+    conn.commit()
+    conn.close()
+    emit('read_receipt', {'room': room, 'username': username}, to=room)
+    
     emit('history', history)
-    emit('new_message', {'username': 'system', 'text': f'{username} присоединился к чату'}, to=room, skip_sid=request.sid)
+    emit('new_message', {'username': 'system', 'text': f'{username} присоединился к чату', 'read_status': 'read'}, to=room, skip_sid=request.sid)
 
 @socketio.on('message')
 def handle_message(data):
@@ -374,12 +409,25 @@ def handle_message(data):
     
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
-    c.execute('INSERT INTO messages (room, username, text, timestamp) VALUES (?, ?, ?, ?)',
-              (room, username, text, datetime.now()))
+    c.execute('INSERT INTO messages (room, username, text, timestamp, read_status) VALUES (?, ?, ?, ?, ?)',
+              (room, username, text, datetime.now(), 'sent'))
     conn.commit()
     conn.close()
     
-    emit('new_message', {'username': username, 'text': text}, to=room)
+    emit('new_message', {'username': username, 'text': text, 'read_status': 'sent'}, to=room)
+
+@socketio.on('mark_read')
+def handle_mark_read(data):
+    room = data['room']
+    username = data.get('username') or request.sid
+    
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute('UPDATE messages SET read_status = "read" WHERE room = ? AND username != ? AND read_status = "sent"', (room, username))
+    conn.commit()
+    conn.close()
+    
+    emit('read_receipt', {'room': room, 'username': username}, to=room)
 
 if __name__ == '__main__':
     init_db()
