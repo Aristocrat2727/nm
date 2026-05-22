@@ -50,7 +50,7 @@ HTML = """
 <html lang="ru">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes, viewport-fit=cover">
     <title>Shadow Chat — с галочками</title>
     <script src="https://cdn.socket.io/4.5.0/socket.io.min.js"></script>
     <style>
@@ -126,6 +126,17 @@ HTML = """
     const savedToken = localStorage.getItem('shadow_token');
     const savedUsername = localStorage.getItem('shadow_username');
     
+    // Принудительный фокус на поле ввода
+    function focusInput() {
+        setTimeout(() => {
+            if (messageInput) {
+                messageInput.focus();
+                // для iOS
+                messageInput.click();
+            }
+        }, 100);
+    }
+    
     function addMessage(text, isMy, username = '', readStatus = 'sent') {
         const div = document.createElement('div');
         div.className = `message ${isMy ? 'my-message' : 'other-message'}`;
@@ -144,6 +155,7 @@ HTML = """
         div.appendChild(bubble);
         messagesDiv.appendChild(div);
         messagesDiv.scrollTop = messagesDiv.scrollHeight;
+        focusInput();
     }
     
     function escapeHtml(str) {
@@ -180,6 +192,7 @@ HTML = """
             authPanel.style.display = 'none';
             roomPanel.style.display = 'flex';
             statusSpan.innerText = `✅ С возвращением, ${currentUser}! Введите код комнаты.`;
+            focusInput();
             return true;
         } else {
             localStorage.removeItem('shadow_token');
@@ -203,6 +216,7 @@ HTML = """
             authPanel.style.display = 'none';
             roomPanel.style.display = 'flex';
             statusSpan.innerText = `✅ Добро пожаловать, ${username}! Введите код комнаты.`;
+            focusInput();
         } else {
             statusSpan.innerText = `❌ ${result.error}`;
         }
@@ -237,12 +251,13 @@ HTML = """
             socket.emit('join', { room, username: currentUser });
             currentRoom = room;
             statusSpan.innerText = `✅ Комната: ${room}. Пишите сообщения.`;
-            messageInput.focus();
+            focusInput();
         });
         
         socket.on('history', (history) => {
             loadHistory(history);
             inputArea.style.display = 'flex';
+            focusInput();
         });
         
         socket.on('new_message', (data) => {
@@ -251,6 +266,7 @@ HTML = """
             if (!isMy && currentRoom === data.room) {
                 socket.emit('mark_read', { room: data.room });
             }
+            focusInput();
         });
         
         socket.on('read_receipt', ({ room, username }) => {
@@ -285,11 +301,20 @@ HTML = """
         if (text && socket && currentRoom) {
             socket.emit('message', { room: currentRoom, text, username: currentUser });
             messageInput.value = '';
+            focusInput();
         }
     };
     
     messageInput.addEventListener('keypress', (e) => {
-        if (e.key === 'Enter') sendBtn.click();
+        if (e.key === 'Enter') {
+            e.preventDefault();
+            sendBtn.click();
+        }
+    });
+    
+    // Запрещаем скролл страницы при таче на поле ввода
+    messageInput.addEventListener('touchstart', (e) => {
+        e.stopPropagation();
     });
     
     autoLogin();
@@ -388,7 +413,6 @@ def handle_join(data):
     history = [{'username': r[0], 'text': r[1], 'timestamp': r[2], 'read_status': r[3]} for r in rows]
     conn.close()
     
-    # Обновляем статус прочитанных для сообщений, отправленных этому пользователю
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
     c.execute('UPDATE messages SET read_status = "read" WHERE room = ? AND username != ? AND read_status = "sent"', (room, username))
