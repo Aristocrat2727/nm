@@ -56,13 +56,15 @@ HTML = """
         .auth-panel .buttons button{flex:1}
         .chat-container{display:flex;width:100vw;height:100vh;background:#1e1f2c}
         .sidebar{width:280px;background:#0f0f14;border-right:1px solid #2d2f3e;display:flex;flex-direction:column}
-        .sidebar-header{padding:16px;border-bottom:1px solid #2d2f3e;color:white;font-weight:bold}
+        .sidebar-header{padding:16px;border-bottom:1px solid #2d2f3e;display:flex;justify-content:space-between;align-items:center}
+        .sidebar-header h3{color:white}
+        .new-room-btn{background:#6366f1;border:none;border-radius:40px;padding:6px 16px;color:white;cursor:pointer}
         .rooms-list{flex:1;overflow-y:auto}
         .room-item{padding:12px 16px;border-bottom:1px solid #2d2f3e;cursor:pointer;color:#e2e8f0}
         .room-item.active{background:#6366f1}
         .room-name{font-weight:bold}
         .chat-area{flex:1;display:flex;flex-direction:column}
-        .chat-header{padding:16px;border-bottom:1px solid #2d2f3e;display:flex;justify-content:space-between}
+        .chat-header{padding:16px;border-bottom:1px solid #2d2f3e;display:flex;justify-content:space-between;align-items:center}
         .chat-header h3{color:white}
         .leave-btn{background:#2d2f3e;border:none;border-radius:40px;padding:6px 16px;color:white;cursor:pointer}
         .messages{flex:1;overflow-y:auto;padding:16px;display:flex;flex-direction:column;gap:12px}
@@ -74,7 +76,11 @@ HTML = """
         .input-area input{flex:1;background:#0f0f14;border:1px solid #2d2f3e;border-radius:40px;padding:12px;color:white}
         .input-area button{background:#6366f1;border:none;border-radius:40px;padding:0 20px;color:white;cursor:pointer}
         .status{padding:8px;text-align:center;color:#7c8ba0;font-size:12px}
-        @media (max-width:600px){.sidebar{position:fixed;left:-280px;height:100%;z-index:10}.sidebar.open{left:0}.menu-btn{position:fixed;bottom:20px;left:20px;background:#6366f1;border:none;border-radius:50%;width:50px;height:50px;color:white;font-size:24px;z-index:20}}
+        @media (max-width:600px){
+            .sidebar{position:fixed;left:-280px;height:100%;z-index:10;transition:0.2s}
+            .sidebar.open{left:0}
+            .menu-btn{position:fixed;bottom:20px;left:20px;background:#6366f1;border:none;border-radius:50%;width:50px;height:50px;color:white;font-size:24px;z-index:20;display:flex;align-items:center;justify-content:center;cursor:pointer}
+        }
         .menu-btn{display:none}
     </style>
 </head>
@@ -111,7 +117,10 @@ HTML = """
             <button class="menu-btn" id="menuBtn">☰</button>
             <div class="chat-container">
                 <div class="sidebar" id="sidebar">
-                    <div class="sidebar-header">📁 Чаты</div>
+                    <div class="sidebar-header">
+                        <h3>📁 Чаты</h3>
+                        <button class="new-room-btn" id="newRoomBtn">+ Новый чат</button>
+                    </div>
                     <div class="rooms-list" id="roomsList"></div>
                 </div>
                 <div class="chat-area">
@@ -135,6 +144,7 @@ HTML = """
         document.getElementById('menuBtn')?.addEventListener('click', () => {
             document.getElementById('sidebar').classList.toggle('open');
         });
+        document.getElementById('newRoomBtn')?.addEventListener('click', createNewRoom);
         document.getElementById('leaveBtn')?.addEventListener('click', leaveRoom);
         document.getElementById('sendBtn')?.addEventListener('click', sendMessage);
         document.getElementById('messageInput')?.addEventListener('keypress', (e) => {
@@ -233,6 +243,13 @@ HTML = """
     function switchRoom(room) {
         currentRoom = room;
         renderChat();
+    }
+    
+    function createNewRoom() {
+        const roomName = prompt('Введите название нового чата:');
+        if (roomName && roomName.trim()) {
+            switchRoom(roomName.trim());
+        }
     }
     
     function leaveRoom() {
