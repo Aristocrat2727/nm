@@ -80,6 +80,12 @@ HTML = """
         .input-area input{flex:1;background:#1e1f2c;border:1px solid #2d2f3e;border-radius:40px;padding:12px;color:white;outline:none}
         .input-area button{background:#6366f1;border:none;border-radius:40px;padding:0 20px;color:white;font-weight:bold;cursor:pointer}
         .status{font-size:12px;color:#7c8ba0;text-align:center;padding:8px}
+        @media (max-width:600px){
+            .container{height:95%;max-width:100%}
+            .bubble{max-width:85%}
+            .room-panel .row{gap:6px}
+            .room-panel input{padding:8px 12px}
+        }
     </style>
 </head>
 <body>
@@ -130,7 +136,6 @@ HTML = """
         setTimeout(() => {
             if (messageInput) {
                 messageInput.focus();
-                messageInput.click();
             }
         }, 100);
     }
@@ -255,7 +260,6 @@ HTML = """
         
         socket.on('history', (history) => {
             loadHistory(history);
-            inputArea.style.display = 'flex';
             focusInput();
         });
         
@@ -265,7 +269,6 @@ HTML = """
             if (!isMy && currentRoom === data.room) {
                 socket.emit('mark_read', { room: data.room });
             }
-            focusInput();
         });
         
         socket.on('read_receipt', ({ room, username }) => {
@@ -309,10 +312,6 @@ HTML = """
             e.preventDefault();
             sendBtn.click();
         }
-    });
-    
-    messageInput.addEventListener('touchstart', (e) => {
-        e.stopPropagation();
     });
     
     autoLogin();
