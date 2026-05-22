@@ -25,12 +25,19 @@ def init_db():
         room TEXT NOT NULL,
         username TEXT NOT NULL,
         text TEXT NOT NULL,
-        timestamp TIMESTAMP
+        timestamp TIMESTAMP,
+        read_status TEXT DEFAULT 'sent'
     )''')
     c.execute('''CREATE TABLE IF NOT EXISTS sessions (
         token TEXT PRIMARY KEY,
         username TEXT NOT NULL,
         expires_at TIMESTAMP
+    )''')
+    c.execute('''CREATE TABLE IF NOT EXISTS user_rooms (
+        username TEXT NOT NULL,
+        room TEXT NOT NULL,
+        last_read TIMESTAMP,
+        PRIMARY KEY (username, room)
     )''')
     conn.commit()
     conn.close()
@@ -44,7 +51,7 @@ HTML = """
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
-    <title>Shadow Chat</title>
+    <title>Shadow Chat — с чатами и уведомлениями</title>
     <script src="https://cdn.socket.io/4.5.0/socket.io.min.js"></script>
     <style>
         *{margin:0;padding:0;box-sizing:border-box}
@@ -62,7 +69,8 @@ HTML = """
         .rooms-list{flex:1;overflow-y:auto}
         .room-item{padding:12px 16px;border-bottom:1px solid #2d2f3e;cursor:pointer;color:#e2e8f0}
         .room-item.active{background:#6366f1}
-        .room-name{font-weight:bold}
+        .room-name{font-weight:bold;display:flex;justify-content:space-between;align-items:center}
+        .unread-badge{background:#ef4444;border-radius:20px;padding:2px 8px;font-size:10px;color:white}
         .chat-area{flex:1;display:flex;flex-direction:column}
         .chat-header{padding:16px;border-bottom:1px solid #2d2f3e;display:flex;justify-content:space-between;align-items:center}
         .chat-header h3{color:white}
@@ -72,6 +80,7 @@ HTML = """
         .my-message{align-self:flex-end;flex-direction:row-reverse}
         .bubble{background:#2d2f3e;padding:10px 14px;border-radius:20px;color:#e2e8f0}
         .my-message .bubble{background:#6366f1;color:white}
+        .message-info{font-size:10px;color:#7c8ba0;margin-top:4px;text-align:right}
         .input-area{display:flex;gap:8px;padding:16px;border-top:1px solid #2d2f3e}
         .input-area input{flex:1;background:#0f0f14;border:1px solid #2d2f3e;border-radius:40px;padding:12px;color:white}
         .input-area button{background:#6366f1;border:none;border-radius:40px;padding:0 20px;color:white;cursor:pointer}
@@ -92,9 +101,12 @@ HTML = """
     let currentRoom = null;
     let rooms = [];
     let messages = {};
+    let unreadCount = {};
     
     const savedToken = localStorage.getItem('shadow_token');
     const savedUsername = localStorage.getItem('shadow_username');
+    
+    if (Notification.permission === 'default') Notification.requestPermission();
     
     function renderAuth() {
         document.getElementById('root').innerHTML = `
@@ -157,7 +169,10 @@ HTML = """
         if (!container) return;
         container.innerHTML = rooms.map(room => `
             <div class="room-item ${currentRoom === room ? 'active' : ''}" data-room="${room}">
-                <div class="room-name">${escapeHtml(room)}</div>
+                <div class="room-name">
+                    <span>${escapeHtml(room)}</span>
+                    ${unreadCount[room] > 0 ? `<span class="unread-badge">${unreadCount[room]}</span>` : ''}
+                </div>
             </div>
         `).join('');
         document.querySelectorAll('.room-item').forEach(el => {
@@ -174,6 +189,9 @@ HTML = """
                 <div class="bubble">
                     ${msg.username !== currentUser ? `<b>${escapeHtml(msg.username)}</b><br>` : ''}
                     ${escapeHtml(msg.text)}
+                    <div class="message-info">
+                        ${msg.username === currentUser ? (msg.read_status === 'read' ? '✓✓' : '✓') : ''}
+                    </div>
                 </div>
             </div>
         `).join('');
@@ -223,6 +241,7 @@ HTML = """
         if (result.success) {
             rooms = result.rooms;
             messages = result.messages || {};
+            unreadCount = result.unreadCount || {};
         }
     }
     
@@ -235,20 +254,44 @@ HTML = """
         socket.on('new_message', (data) => {
             if (!messages[data.room]) messages[data.room] = [];
             messages[data.room].push(data);
-            if (data.room === currentRoom) renderMessages();
-            renderRoomsList();
+            if (data.room !== currentRoom) {
+                unreadCount[data.room] = (unreadCount[data.room] || 0) + 1;
+                if (Notification.permission === 'granted') {
+                    new Notification('Новое сообщение', { body: `${data.username}: ${data.text}` });
+                }
+                renderRoomsList();
+            }
+            if (data.room === currentRoom) {
+                renderMessages();
+                socket.emit('mark_read', { room: data.room });
+            }
+        });
+        socket.on('read_receipt', ({ room, username }) => {
+            if (messages[room]) {
+                messages[room].forEach(msg => {
+                    if (msg.username !== currentUser && msg.read_status !== 'read') msg.read_status = 'read';
+                });
+                if (room === currentRoom) renderMessages();
+            }
         });
     }
     
     function switchRoom(room) {
         currentRoom = room;
+        if (socket) socket.emit('mark_read', { room });
+        unreadCount[room] = 0;
         renderChat();
     }
     
     function createNewRoom() {
         const roomName = prompt('Введите название нового чата:');
         if (roomName && roomName.trim()) {
-            switchRoom(roomName.trim());
+            if (!rooms.includes(roomName.trim())) {
+                rooms.push(roomName.trim());
+                switchRoom(roomName.trim());
+            } else {
+                alert('Чат с таким названием уже существует');
+            }
         }
     }
     
@@ -374,13 +417,25 @@ def user_data():
     rooms = [row[0] for row in c.fetchall()]
     
     messages_dict = {}
+    unreadCount = {}
+    
     for room in rooms:
-        c.execute('SELECT username, text, timestamp FROM messages WHERE room = ? ORDER BY timestamp', (room,))
+        c.execute('SELECT username, text, timestamp, read_status FROM messages WHERE room = ? ORDER BY timestamp', (room,))
         rows = c.fetchall()
-        messages_dict[room] = [{'username': r[0], 'text': r[1], 'timestamp': r[2]} for r in rows]
+        msgs = [{'username': r[0], 'text': r[1], 'timestamp': r[2], 'read_status': r[3]} for r in rows]
+        messages_dict[room] = msgs
+        
+        c.execute('SELECT last_read FROM user_rooms WHERE username = ? AND room = ?', (username, room))
+        last_read_row = c.fetchone()
+        last_read = last_read_row[0] if last_read_row else None
+        
+        if last_read:
+            unreadCount[room] = sum(1 for m in msgs if m['username'] != username and m['timestamp'] > last_read)
+        else:
+            unreadCount[room] = sum(1 for m in msgs if m['username'] != username)
     
     conn.close()
-    return {'success': True, 'rooms': rooms, 'messages': messages_dict}
+    return {'success': True, 'rooms': rooms, 'messages': messages_dict, 'unreadCount': unreadCount}
 
 @socketio.on('register')
 def handle_register(username):
@@ -394,12 +449,28 @@ def handle_message(data):
     
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
-    c.execute('INSERT INTO messages (room, username, text, timestamp) VALUES (?, ?, ?, ?)',
-              (room, username, text, datetime.now()))
+    c.execute('INSERT INTO messages (room, username, text, timestamp, read_status) VALUES (?, ?, ?, ?, ?)',
+              (room, username, text, datetime.now(), 'sent'))
     conn.commit()
     conn.close()
     
-    emit('new_message', {'room': room, 'username': username, 'text': text}, to=room)
+    emit('new_message', {'room': room, 'username': username, 'text': text, 'read_status': 'sent'}, to=room)
+
+@socketio.on('mark_read')
+def handle_mark_read(data):
+    room = data['room']
+    username = request.sid
+    
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute('INSERT OR REPLACE INTO user_rooms (username, room, last_read) VALUES (?, ?, ?)',
+              (username, room, datetime.now()))
+    c.execute('UPDATE messages SET read_status = "read" WHERE room = ? AND username != ? AND read_status = "sent"',
+              (room, username))
+    conn.commit()
+    conn.close()
+    
+    emit('read_receipt', {'room': room, 'username': username}, to=room)
 
 @socketio.on('leave_room')
 def handle_leave(data):
