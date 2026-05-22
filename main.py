@@ -38,7 +38,7 @@ HTML = """
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
-    <title>Shadow Chat — аккаунты (SQLite)</title>
+    <title>Shadow Chat — аккаунты</title>
     <script src="https://cdn.socket.io/4.5.0/socket.io.min.js"></script>
     <style>
         *{margin:0;padding:0;box-sizing:border-box}
@@ -46,11 +46,16 @@ HTML = """
         .container{background:#1e1f2c;border-radius:40px;width:100%;max-width:600px;height:90%;display:flex;flex-direction:column;overflow:hidden}
         .header{background:#1e1f2c;padding:16px;border-bottom:1px solid #2d2f3e;text-align:center}
         .header h1{color:#f1f5f9;font-size:1.3rem}
-        .auth-panel{display:flex;flex-direction:column;gap:8px;padding:12px;background:#0f0f14;border-bottom:1px solid #2d2f3e}
-        .row{display:flex;gap:8px}
-        .row input{flex:1;background:#1e1f2c;border:1px solid #2d2f3e;border-radius:40px;padding:10px 16px;color:white;outline:none}
-        .row button{background:#6366f1;border:none;border-radius:40px;padding:0 20px;color:white;font-weight:bold;cursor:pointer}
+        .auth-panel{display:flex;flex-direction:column;gap:12px;padding:20px;background:#0f0f14;border-bottom:1px solid #2d2f3e}
+        .auth-panel input{background:#1e1f2c;border:1px solid #2d2f3e;border-radius:40px;padding:12px 16px;color:white;outline:none;width:100%}
+        .auth-panel input:focus{border-color:#6366f1}
+        .buttons{display:flex;gap:12px;margin-top:8px}
+        .buttons button{flex:1;background:#6366f1;border:none;border-radius:40px;padding:12px;color:white;font-weight:bold;cursor:pointer}
+        .buttons button:active{transform:scale(0.97)}
         .room-panel{display:flex;flex-direction:column;gap:8px;padding:12px;background:#0f0f14;border-bottom:1px solid #2d2f3e;display:none}
+        .room-panel .row{display:flex;gap:8px}
+        .room-panel input{flex:1;background:#1e1f2c;border:1px solid #2d2f3e;border-radius:40px;padding:10px 16px;color:white;outline:none}
+        .room-panel button{background:#6366f1;border:none;border-radius:40px;padding:0 20px;color:white;font-weight:bold;cursor:pointer}
         .messages{flex:1;overflow-y:auto;padding:16px;display:flex;flex-direction:column;gap:12px}
         .message{display:flex;gap:10px}
         .my-message{justify-content:flex-end}
@@ -69,14 +74,10 @@ HTML = """
         <h1>💬 Shadow Chat</h1>
     </div>
     <div class="auth-panel" id="authPanel">
-        <div class="row">
-            <input type="text" id="loginUsername" placeholder="Логин">
-            <input type="password" id="loginPassword" placeholder="Пароль">
+        <input type="text" id="username" placeholder="Логин">
+        <input type="password" id="password" placeholder="Пароль">
+        <div class="buttons">
             <button id="loginBtn">Войти</button>
-        </div>
-        <div class="row">
-            <input type="text" id="regUsername" placeholder="Новый логин">
-            <input type="password" id="regPassword" placeholder="Пароль">
             <button id="registerBtn">Зарегистрироваться</button>
         </div>
     </div>
@@ -91,7 +92,7 @@ HTML = """
         <input type="text" id="messageInput" placeholder="Напиши сообщение..." autocomplete="off">
         <button id="sendBtn">➤</button>
     </div>
-    <div class="status" id="status">Войдите или зарегистрируйтесь</div>
+    <div class="status" id="status">Введите логин и пароль</div>
 </div>
 <script>
     let socket = null;
@@ -147,10 +148,10 @@ HTML = """
     }
     
     document.getElementById('loginBtn').onclick = async () => {
-        const username = document.getElementById('loginUsername').value.trim();
-        const password = document.getElementById('loginPassword').value.trim();
+        const username = document.getElementById('username').value.trim();
+        const password = document.getElementById('password').value.trim();
         if (!username || !password) {
-            statusSpan.innerText = '❌ Введи логин и пароль';
+            statusSpan.innerText = '❌ Введите логин и пароль';
             return;
         }
         const result = await apiRequest('/login', { username, password });
@@ -158,24 +159,22 @@ HTML = """
             currentUser = username;
             authPanel.style.display = 'none';
             roomPanel.style.display = 'flex';
-            statusSpan.innerText = `✅ Добро пожаловать, ${username}! Введи код комнаты.`;
+            statusSpan.innerText = `✅ Добро пожаловать, ${username}! Введите код комнаты.`;
         } else {
             statusSpan.innerText = `❌ ${result.error}`;
         }
     };
     
     document.getElementById('registerBtn').onclick = async () => {
-        const username = document.getElementById('regUsername').value.trim();
-        const password = document.getElementById('regPassword').value.trim();
+        const username = document.getElementById('username').value.trim();
+        const password = document.getElementById('password').value.trim();
         if (!username || !password) {
-            statusSpan.innerText = '❌ Введи логин и пароль';
+            statusSpan.innerText = '❌ Введите логин и пароль';
             return;
         }
         const result = await apiRequest('/register', { username, password });
         if (result.success) {
             statusSpan.innerText = `✅ Регистрация успешна! Теперь войдите.`;
-            document.getElementById('loginUsername').value = username;
-            document.getElementById('loginPassword').value = password;
         } else {
             statusSpan.innerText = `❌ ${result.error}`;
         }
@@ -184,7 +183,7 @@ HTML = """
     joinBtn.onclick = () => {
         const room = roomCodeInput.value.trim();
         if (!room) {
-            statusSpan.innerText = '❌ Введи код комнаты';
+            statusSpan.innerText = '❌ Введите код комнаты';
             return;
         }
         if (socket) socket.disconnect();
@@ -196,7 +195,7 @@ HTML = """
         socket.on('history', (history) => {
             loadHistory(history);
             inputArea.style.display = 'flex';
-            statusSpan.innerText = `✅ Комната: ${room}. Пиши сообщения.`;
+            statusSpan.innerText = `✅ Комната: ${room}. Пишите сообщения.`;
             messageInput.focus();
         });
         
@@ -206,7 +205,7 @@ HTML = """
         });
         
         socket.on('disconnect', () => {
-            statusSpan.innerText = 'Потеряно соединение. Перезагрузи страницу.';
+            statusSpan.innerText = 'Потеряно соединение. Перезагрузите страницу.';
         });
     };
     
@@ -291,10 +290,8 @@ def handle_join(data):
 def handle_message(data):
     room = data['room']
     text = data['text']
-    username = request.sid  # на самом деле нужно передавать с клиента
-    # Но у нас текущий пользователь известен из сессии? Упростим: передаём с клиента
+    username = data.get('username', request.sid)  # пока так, но нужно сессию
     
-    # Сохраняем в БД
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
     c.execute('INSERT INTO messages (room, username, text, timestamp) VALUES (?, ?, ?, ?)',
