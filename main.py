@@ -76,7 +76,7 @@ HTML = """
         .my-message .bubble{background:#6366f1;color:white}
         .other-message .bubble{background:#2d2f3e;color:#e2e8f0}
         .message-info{font-size:10px;color:#7c8ba0;margin-top:4px;text-align:right}
-        .input-area{display:flex;gap:8px;padding:16px;border-top:1px solid #2d2f3e;background:#0f0f14;display:none}
+        .input-area{display:flex;gap:8px;padding:16px;border-top:1px solid #2d2f3e;background:#0f0f14}
         .input-area input{flex:1;background:#1e1f2c;border:1px solid #2d2f3e;border-radius:40px;padding:12px;color:white;outline:none}
         .input-area button{background:#6366f1;border:none;border-radius:40px;padding:0 20px;color:white;font-weight:bold;cursor:pointer}
         .status{font-size:12px;color:#7c8ba0;text-align:center;padding:8px}
@@ -126,12 +126,10 @@ HTML = """
     const savedToken = localStorage.getItem('shadow_token');
     const savedUsername = localStorage.getItem('shadow_username');
     
-    // Принудительный фокус на поле ввода
     function focusInput() {
         setTimeout(() => {
             if (messageInput) {
                 messageInput.focus();
-                // для iOS
                 messageInput.click();
             }
         }, 100);
@@ -251,6 +249,7 @@ HTML = """
             socket.emit('join', { room, username: currentUser });
             currentRoom = room;
             statusSpan.innerText = `✅ Комната: ${room}. Пишите сообщения.`;
+            inputArea.style.display = 'flex';
             focusInput();
         });
         
@@ -312,7 +311,6 @@ HTML = """
         }
     });
     
-    // Запрещаем скролл страницы при таче на поле ввода
     messageInput.addEventListener('touchstart', (e) => {
         e.stopPropagation();
     });
