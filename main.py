@@ -14,8 +14,8 @@ from datetime import datetime, timedelta
 
 app = Flask(__name__)
 
-app.config['SECRET_KEY'] = os.environ.get(
-    'SECRET_KEY',
+app.config["SECRET_KEY"] = os.environ.get(
+    "SECRET_KEY",
     secrets.token_hex(32)
 )
 
@@ -849,8 +849,7 @@ def register():
             "error": "Пользователь уже существует"
         }
 
-    password_hash =
-        generate_password_hash(password)
+    password_hash = generate_password_hash(password)
 
     c.execute("""
     INSERT INTO users(
@@ -912,8 +911,7 @@ def login():
 
     token = secrets.token_urlsafe(32)
 
-    expires =
-        datetime.now() + timedelta(days=365)
+    expires = datetime.now() + timedelta(days=365)
 
     conn = db()
 
@@ -948,8 +946,7 @@ def auto_login():
 
     token = data.get("token")
 
-    username =
-        get_username_by_token(token)
+    username = get_username_by_token(token)
 
     if not username:
 
@@ -969,8 +966,7 @@ def add_room():
     token = data.get("token")
     room = data.get("room")
 
-    username =
-        get_username_by_token(token)
+    username = get_username_by_token(token)
 
     if not username:
 
@@ -1006,8 +1002,7 @@ def user_data():
 
     token = data.get("token")
 
-    username =
-        get_username_by_token(token)
+    username = get_username_by_token(token)
 
     if not username:
 
@@ -1119,16 +1114,14 @@ def socket_message(data):
     room = data["room"]
     text = data["text"]
 
-    username =
-        connected_users.get(
-            request.sid
-        )
+    username = connected_users.get(
+        request.sid
+    )
 
     if not username:
         return
 
-    timestamp =
-        datetime.now().isoformat()
+    timestamp = datetime.now().isoformat()
 
     conn = db()
 
