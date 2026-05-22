@@ -50,8 +50,8 @@ HTML = """
 <html lang="ru">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
-    <title>Shadow Chat — с галочками</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes, viewport-fit=cover">
+    <title>Shadow Chat — с никами и временем</title>
     <script src="https://cdn.socket.io/4.5.0/socket.io.min.js"></script>
     <style>
         *{margin:0;padding:0;box-sizing:border-box}
@@ -64,22 +64,30 @@ HTML = """
         .auth-panel input:focus{border-color:#6366f1}
         .buttons{display:flex;gap:12px;margin-top:8px}
         .buttons button{flex:1;background:#6366f1;border:none;border-radius:40px;padding:12px;color:white;font-weight:bold;cursor:pointer}
-        .buttons button:active{transform:scale(0.97)}
         .room-panel{display:flex;flex-direction:column;gap:8px;padding:12px;background:#0f0f14;border-bottom:1px solid #2d2f3e;display:none}
         .room-panel .row{display:flex;gap:8px}
         .room-panel input{flex:1;background:#1e1f2c;border:1px solid #2d2f3e;border-radius:40px;padding:10px 16px;color:white;outline:none}
         .room-panel button{background:#6366f1;border:none;border-radius:40px;padding:0 20px;color:white;font-weight:bold;cursor:pointer}
         .messages{flex:1;overflow-y:auto;padding:16px;display:flex;flex-direction:column;gap:12px}
-        .message{display:flex;gap:10px}
+        .message{display:flex;gap:10px;width:100%}
         .my-message{justify-content:flex-end}
+        .avatar{width:32px;height:32px;border-radius:50%;background:#2d2f3e;display:flex;align-items:center;justify-content:center;font-size:12px;color:#e2e8f0;flex-shrink:0}
+        .my-message .avatar{display:none}
         .bubble{max-width:70%;padding:10px 14px;border-radius:20px;font-size:14px;line-height:1.4;word-break:break-word}
         .my-message .bubble{background:#6366f1;color:white}
         .other-message .bubble{background:#2d2f3e;color:#e2e8f0}
-        .message-info{font-size:10px;color:#7c8ba0;margin-top:4px;text-align:right}
-        .input-area{display:flex;gap:8px;padding:16px;border-top:1px solid #2d2f3e;background:#0f0f14;display:none}
+        .message-info{font-size:10px;color:#7c8ba0;margin-top:4px;display:flex;gap:6px;justify-content:flex-end}
+        .input-area{display:flex;gap:8px;padding:16px;border-top:1px solid #2d2f3e;background:#0f0f14}
         .input-area input{flex:1;background:#1e1f2c;border:1px solid #2d2f3e;border-radius:40px;padding:12px;color:white;outline:none}
         .input-area button{background:#6366f1;border:none;border-radius:40px;padding:0 20px;color:white;font-weight:bold;cursor:pointer}
         .status{font-size:12px;color:#7c8ba0;text-align:center;padding:8px}
+        .username{font-weight:bold;margin-bottom:4px;font-size:12px}
+        @media (max-width:600px){
+            .container{height:95%;max-width:100%}
+            .bubble{max-width:85%}
+            .room-panel .row{gap:6px}
+            .room-panel input{padding:8px 12px}
+        }
     </style>
 </head>
 <body>
@@ -126,38 +134,67 @@ HTML = """
     const savedToken = localStorage.getItem('shadow_token');
     const savedUsername = localStorage.getItem('shadow_username');
     
-    function addMessage(text, isMy, username = '', readStatus = 'sent') {
+    function formatTime(isoString) {
+        if (!isoString) return '';
+        const date = new Date(isoString);
+        return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    }
+    
+    function addMessage(text, isMy, username = '', readStatus = 'sent', timestamp = null) {
         const div = document.createElement('div');
         div.className = `message ${isMy ? 'my-message' : 'other-message'}`;
+        
+        const avatar = document.createElement('div');
+        avatar.className = 'avatar';
+        avatar.innerText = isMy ? '' : (username.charAt(0) || '?');
+        
+        const bubbleWrapper = document.createElement('div');
+        bubbleWrapper.style.maxWidth = '70%';
+        
         const bubble = document.createElement('div');
         bubble.className = 'bubble';
-        if (!isMy && username) bubble.innerHTML = `<b>${escapeHtml(username)}</b><br>${escapeHtml(text)}`;
-        else bubble.innerText = text;
-        if (isMy) {
-            const info = document.createElement('div');
-            info.className = 'message-info';
-            info.innerText = readStatus === 'read' ? '✓✓' : '✓';
-            bubble.appendChild(info);
+        
+        if (!isMy) {
+            const nameSpan = document.createElement('div');
+            nameSpan.className = 'username';
+            nameSpan.innerText = escapeHtml(username);
+            bubble.appendChild(nameSpan);
         }
-        div.appendChild(bubble);
+        
+        const textSpan = document.createElement('span');
+        textSpan.innerText = text;
+        bubble.appendChild(textSpan);
+        
+        const info = document.createElement('div');
+        info.className = 'message-info';
+        const timeSpan = document.createElement('span');
+        timeSpan.innerText = formatTime(timestamp);
+        info.appendChild(timeSpan);
+        
+        if (isMy) {
+            const statusSpan = document.createElement('span');
+            statusSpan.innerText = readStatus === 'read' ? '✓✓' : '✓';
+            info.appendChild(statusSpan);
+        }
+        
+        bubble.appendChild(info);
+        bubbleWrapper.appendChild(bubble);
+        
+        div.appendChild(avatar);
+        div.appendChild(bubbleWrapper);
         messagesDiv.appendChild(div);
         messagesDiv.scrollTop = messagesDiv.scrollHeight;
     }
     
     function escapeHtml(str) {
-        return str.replace(/[&<>]/g, function(m) {
-            if (m === '&') return '&amp;';
-            if (m === '<') return '&lt;';
-            if (m === '>') return '&gt;';
-            return m;
-        });
+        return String(str).replace(/[&<>]/g, m => m === '&' ? '&amp;' : m === '<' ? '&lt;' : '&gt;');
     }
     
     function loadHistory(history) {
         messagesDiv.innerHTML = '';
         for (let msg of history) {
             const isMy = (msg.username === currentUser);
-            addMessage(msg.text, isMy, isMy ? '' : msg.username, msg.read_status);
+            addMessage(msg.text, isMy, msg.username, msg.read_status, msg.timestamp);
         }
     }
     
@@ -224,27 +261,34 @@ HTML = """
     function connectToRoom(room) {
         if (socket) socket.disconnect();
         socket = io({ reconnection: true, reconnectionAttempts: Infinity });
+        
         socket.on('connect', () => {
             socket.emit('join', { room, username: currentUser });
             currentRoom = room;
             statusSpan.innerText = `✅ Комната: ${room}. Пишите сообщения.`;
+            inputArea.style.display = 'flex';
             messageInput.focus();
         });
+        
         socket.on('history', (history) => {
             loadHistory(history);
-            inputArea.style.display = 'flex';
         });
+        
         socket.on('new_message', (data) => {
             const isMy = (data.username === currentUser);
-            addMessage(data.text, isMy, isMy ? '' : data.username, data.read_status);
+            addMessage(data.text, isMy, data.username, data.read_status, data.timestamp);
             if (!isMy && currentRoom === data.room) {
                 socket.emit('mark_read', { room: data.room });
             }
         });
+        
         socket.on('read_receipt', ({ room }) => {
             if (room === currentRoom) {
                 document.querySelectorAll('.my-message .message-info').forEach(info => {
-                    if (info.innerText === '✓') info.innerText = '✓✓';
+                    const statusSpan = info.querySelector('span:last-child');
+                    if (statusSpan && statusSpan.innerText === '✓') {
+                        statusSpan.innerText = '✓✓';
+                    }
                 });
             }
         });
@@ -268,7 +312,10 @@ HTML = """
     };
     
     messageInput.addEventListener('keypress', (e) => {
-        if (e.key === 'Enter') sendBtn.click();
+        if (e.key === 'Enter') {
+            e.preventDefault();
+            sendBtn.click();
+        }
     });
     
     autoLogin();
@@ -298,7 +345,7 @@ def register():
     
     password_hash = hash_password(password)
     c.execute('INSERT INTO users (username, password_hash, created_at) VALUES (?, ?, ?)',
-              (username, password_hash, datetime.now()))
+              (username, password_hash, datetime.now().isoformat()))
     conn.commit()
     conn.close()
     return {'success': True}
@@ -326,7 +373,7 @@ def login():
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
     c.execute('INSERT OR REPLACE INTO sessions (token, username, expires_at) VALUES (?, ?, ?)',
-              (token, username, expires_at))
+              (token, username, expires_at.isoformat()))
     conn.commit()
     conn.close()
     
@@ -374,7 +421,7 @@ def handle_join(data):
     conn.close()
     emit('read_receipt', {'room': room, 'username': username}, to=room)
     emit('history', history)
-    emit('new_message', {'username': 'system', 'text': f'{username} присоединился к чату', 'read_status': 'read'}, to=room, skip_sid=request.sid)
+    emit('new_message', {'username': 'system', 'text': f'{username} присоединился к чату', 'read_status': 'read', 'timestamp': datetime.now().isoformat()}, to=room, skip_sid=request.sid)
 
 @socketio.on('message')
 def handle_message(data):
@@ -384,14 +431,15 @@ def handle_message(data):
     if not username:
         return
     
+    timestamp = datetime.now().isoformat()
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
     c.execute('INSERT INTO messages (room, username, text, timestamp, read_status) VALUES (?, ?, ?, ?, ?)',
-              (room, username, text, datetime.now(), 'sent'))
+              (room, username, text, timestamp, 'sent'))
     conn.commit()
     conn.close()
     
-    emit('new_message', {'username': username, 'text': text, 'read_status': 'sent'}, to=room)
+    emit('new_message', {'username': username, 'text': text, 'read_status': 'sent', 'timestamp': timestamp}, to=room)
 
 @socketio.on('mark_read')
 def handle_mark_read(data):
@@ -406,4 +454,5 @@ def handle_mark_read(data):
 
 if __name__ == '__main__':
     init_db()
-    socketio.run(app, host='0.0.0.0', port=int(os.environ.get('PORT', 8080)))
+    port = int(os.environ.get('PORT', 8080))
+    socketio.run(app, host='0.0.0.0', port=port, allow_unsafe_werkzeug=True)
