@@ -8,9 +8,9 @@ import os
 
 from datetime import datetime, timedelta
 
-# =========================================
+# =====================================================
 # APP
-# =========================================
+# =====================================================
 
 app = Flask(__name__)
 
@@ -25,13 +25,13 @@ socketio = SocketIO(
     async_mode="threading"
 )
 
-# =========================================
+# =====================================================
 # DB
-# =========================================
+# =====================================================
 
-os.makedirs('./data', exist_ok=True)
+os.makedirs("./data", exist_ok=True)
 
-DB_PATH = './data/shadow_chat.db'
+DB_PATH = "./data/shadow_chat.db"
 
 connected_users = {}
 
@@ -42,23 +42,23 @@ def init_db():
 
     c = conn.cursor()
 
-    c.execute('''
+    c.execute("""
     CREATE TABLE IF NOT EXISTS users(
         username TEXT PRIMARY KEY,
         password_hash TEXT NOT NULL,
         created_at TEXT
     )
-    ''')
+    """)
 
-    c.execute('''
+    c.execute("""
     CREATE TABLE IF NOT EXISTS sessions(
         token TEXT PRIMARY KEY,
         username TEXT NOT NULL,
         expires_at TEXT
     )
-    ''')
+    """)
 
-    c.execute('''
+    c.execute("""
     CREATE TABLE IF NOT EXISTS messages(
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         room TEXT NOT NULL,
@@ -67,24 +67,20 @@ def init_db():
         timestamp TEXT,
         read_status TEXT DEFAULT 'sent'
     )
-    ''')
+    """)
 
-    c.execute('''
+    c.execute("""
     CREATE TABLE IF NOT EXISTS user_rooms(
         username TEXT NOT NULL,
         room TEXT NOT NULL,
         last_read TEXT,
         PRIMARY KEY(username, room)
     )
-    ''')
+    """)
 
     conn.commit()
     conn.close()
 
-
-# =========================================
-# HELPERS
-# =========================================
 
 def db():
 
@@ -103,12 +99,12 @@ def get_username_by_token(token):
 
     c = conn.cursor()
 
-    c.execute('''
+    c.execute("""
     SELECT username
     FROM sessions
     WHERE token = ?
     AND expires_at > ?
-    ''', (
+    """, (
         token,
         datetime.now().isoformat()
     ))
@@ -120,12 +116,12 @@ def get_username_by_token(token):
     if not row:
         return None
 
-    return row['username']
+    return row["username"]
 
 
-# =========================================
+# =====================================================
 # HTML
-# =========================================
+# =====================================================
 
 HTML = """
 <!DOCTYPE html>
@@ -138,11 +134,11 @@ HTML = """
 <meta
     name="viewport"
     content="width=device-width, initial-scale=1.0"
->
+/>
 
 <title>Shadow Chat</title>
 
-<script src="https://cdn.socket.io/4.5.0/socket.io.min.js"></script>
+<script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
 
 <style>
 
@@ -208,7 +204,7 @@ body{
 
 .sidebar-top button{
     width:100%;
-    padding:10px;
+    padding:12px;
     border:none;
     border-radius:12px;
     background:#6366f1;
@@ -223,8 +219,8 @@ body{
 
 .room{
     padding:14px;
-    cursor:pointer;
     border-bottom:1px solid #2d2f3e;
+    cursor:pointer;
 }
 
 .room.active{
@@ -297,8 +293,8 @@ body{
 
 .status{
     margin-top:12px;
+    color:#999;
     text-align:center;
-    color:#aaa;
 }
 
 </style>
@@ -406,7 +402,11 @@ function renderChat(){
             <div class="main">
 
                 <div class="header">
-                    ${currentRoom || 'Выберите чат'}
+                    ${
+                        currentRoom
+                        ? escapeHtml(currentRoom)
+                        : 'Выберите чат'
+                    }
                 </div>
 
                 <div
@@ -576,7 +576,7 @@ async function register(){
         .getElementById('status')
         .innerText =
             result.success
-            ? 'Успешно'
+            ? 'Регистрация успешна'
             : result.error;
 }
 
@@ -606,7 +606,8 @@ async function login(){
 
         document
             .getElementById('status')
-            .innerText = result.error;
+            .innerText =
+                result.error;
 
         return;
     }
@@ -644,7 +645,8 @@ async function loadData(){
 
     if(result.success){
 
-        rooms = result.rooms || {};
+        rooms =
+            result.rooms || [];
 
         messages =
             result.messages || {};
@@ -803,59 +805,61 @@ autoLogin();
 </html>
 """
 
-# =========================================
+# =====================================================
 # ROUTES
-# =========================================
+# =====================================================
 
-@app.route('/')
+@app.route("/")
 def index():
 
     return render_template_string(HTML)
 
 
-@app.route('/register', methods=['POST'])
+@app.route("/register", methods=["POST"])
 def register():
 
     data = request.json
 
-    username = data.get('username', '').strip()
-    password = data.get('password', '').strip()
+    username = data.get("username", "").strip()
+    password = data.get("password", "").strip()
 
     if not username or not password:
 
         return {
-            'success': False,
-            'error': 'Введите логин и пароль'
+            "success": False,
+            "error": "Введите логин и пароль"
         }
 
     conn = db()
+
     c = conn.cursor()
 
-    c.execute('''
+    c.execute("""
     SELECT username
     FROM users
     WHERE username = ?
-    ''', (username,))
+    """, (username,))
 
     if c.fetchone():
 
         conn.close()
 
         return {
-            'success': False,
-            'error': 'Пользователь уже существует'
+            "success": False,
+            "error": "Пользователь уже существует"
         }
 
-    password_hash = generate_password_hash(password)
+    password_hash =
+        generate_password_hash(password)
 
-    c.execute('''
+    c.execute("""
     INSERT INTO users(
         username,
         password_hash,
         created_at
     )
     VALUES(?,?,?)
-    ''', (
+    """, (
         username,
         password_hash,
         datetime.now().isoformat()
@@ -864,25 +868,26 @@ def register():
     conn.commit()
     conn.close()
 
-    return {'success': True}
+    return {"success": True}
 
 
-@app.route('/login', methods=['POST'])
+@app.route("/login", methods=["POST"])
 def login():
 
     data = request.json
 
-    username = data.get('username', '').strip()
-    password = data.get('password', '').strip()
+    username = data.get("username", "").strip()
+    password = data.get("password", "").strip()
 
     conn = db()
+
     c = conn.cursor()
 
-    c.execute('''
+    c.execute("""
     SELECT password_hash
     FROM users
     WHERE username = ?
-    ''', (username,))
+    """, (username,))
 
     row = c.fetchone()
 
@@ -891,18 +896,18 @@ def login():
     if not row:
 
         return {
-            'success': False,
-            'error': 'Неверный логин'
+            "success": False,
+            "error": "Неверный логин"
         }
 
     if not check_password_hash(
-        row['password_hash'],
+        row["password_hash"],
         password
     ):
 
         return {
-            'success': False,
-            'error': 'Неверный пароль'
+            "success": False,
+            "error": "Неверный пароль"
         }
 
     token = secrets.token_urlsafe(32)
@@ -911,16 +916,17 @@ def login():
         datetime.now() + timedelta(days=365)
 
     conn = db()
+
     c = conn.cursor()
 
-    c.execute('''
+    c.execute("""
     INSERT OR REPLACE INTO sessions(
         token,
         username,
         expires_at
     )
     VALUES(?,?,?)
-    ''', (
+    """, (
         token,
         username,
         expires.isoformat()
@@ -930,57 +936,58 @@ def login():
     conn.close()
 
     return {
-        'success': True,
-        'token': token
+        "success": True,
+        "token": token
     }
 
 
-@app.route('/auto_login', methods=['POST'])
+@app.route("/auto_login", methods=["POST"])
 def auto_login():
 
     data = request.json
 
-    token = data.get('token')
+    token = data.get("token")
 
     username =
         get_username_by_token(token)
 
     if not username:
 
-        return {'success': False}
+        return {"success": False}
 
     return {
-        'success': True,
-        'username': username
+        "success": True,
+        "username": username
     }
 
 
-@app.route('/add_room', methods=['POST'])
+@app.route("/add_room", methods=["POST"])
 def add_room():
 
     data = request.json
 
-    token = data.get('token')
-    room = data.get('room')
+    token = data.get("token")
+    room = data.get("room")
 
     username =
         get_username_by_token(token)
 
     if not username:
 
-        return {'success': False}
+        return {"success": False}
 
     conn = db()
+
     c = conn.cursor()
 
-    c.execute('''
+    c.execute("""
     INSERT OR IGNORE INTO user_rooms(
         username,
         room,
         last_read
     )
     VALUES(?,?,?)
-    ''', (
+    """, (
         username,
         room,
         datetime.now().isoformat()
@@ -989,127 +996,128 @@ def add_room():
     conn.commit()
     conn.close()
 
-    return {'success': True}
+    return {"success": True}
 
 
-@app.route('/user_data', methods=['POST'])
+@app.route("/user_data", methods=["POST"])
 def user_data():
 
     data = request.json
 
-    token = data.get('token')
+    token = data.get("token")
 
     username =
         get_username_by_token(token)
 
     if not username:
 
-        return {'success': False}
+        return {"success": False}
 
     conn = db()
+
     c = conn.cursor()
 
-    c.execute('''
+    c.execute("""
     SELECT room
     FROM user_rooms
     WHERE username = ?
-    ''', (username,))
+    """, (username,))
 
-    room_rows = c.fetchall()
+    rows = c.fetchall()
 
     rooms = []
 
-    for row in room_rows:
+    for row in rows:
 
-        rooms.append(row['room'])
+        rooms.append(row["room"])
 
     messages = {}
 
     for room in rooms:
 
-        c.execute('''
+        c.execute("""
         SELECT *
         FROM messages
         WHERE room = ?
         ORDER BY timestamp
-        ''', (room,))
+        """, (room,))
 
-        rows = c.fetchall()
+        msg_rows = c.fetchall()
 
         messages[room] = []
 
-        for r in rows:
+        for m in msg_rows:
 
             messages[room].append({
-                'username': r['username'],
-                'text': r['text'],
-                'timestamp': r['timestamp'],
-                'read_status': r['read_status']
+                "username": m["username"],
+                "text": m["text"],
+                "timestamp": m["timestamp"],
+                "read_status": m["read_status"]
             })
 
     conn.close()
 
     return {
-        'success': True,
-        'rooms': rooms,
-        'messages': messages
+        "success": True,
+        "rooms": rooms,
+        "messages": messages
     }
 
 
-# =========================================
+# =====================================================
 # SOCKETS
-# =========================================
+# =====================================================
 
-@socketio.on('connect')
-def on_connect():
+@socketio.on("connect")
+def socket_connect():
 
-    print('socket connected')
+    print("socket connected")
 
 
-@socketio.on('disconnect')
-def on_disconnect():
+@socketio.on("disconnect")
+def socket_disconnect():
 
     connected_users.pop(
         request.sid,
         None
     )
 
-    print('socket disconnected')
+    print("socket disconnected")
 
 
-@socketio.on('register')
+@socketio.on("register")
 def socket_register(username):
 
     connected_users[
         request.sid
     ] = username
 
-    print(username, 'registered')
+    print(username, "registered")
 
 
-@socketio.on('join_room')
+@socketio.on("join_room")
 def socket_join(data):
 
-    room = data['room']
+    room = data["room"]
 
     join_room(room)
 
-    print('joined', room)
+    print("joined", room)
 
 
-@socketio.on('leave_room')
+@socketio.on("leave_room")
 def socket_leave(data):
 
-    room = data['room']
+    room = data["room"]
 
     leave_room(room)
 
 
-@socketio.on('message')
+@socketio.on("message")
 def socket_message(data):
 
-    room = data['room']
-    text = data['text']
+    room = data["room"]
+    text = data["text"]
 
     username =
         connected_users.get(
@@ -1123,9 +1131,10 @@ def socket_message(data):
         datetime.now().isoformat()
 
     conn = db()
+
     c = conn.cursor()
 
-    c.execute('''
+    c.execute("""
     INSERT INTO messages(
         room,
         username,
@@ -1134,41 +1143,44 @@ def socket_message(data):
         read_status
     )
     VALUES(?,?,?,?,?)
-    ''', (
+    """, (
         room,
         username,
         text,
         timestamp,
-        'sent'
+        "sent"
     ))
 
     conn.commit()
     conn.close()
 
     emit(
-        'new_message',
+        "new_message",
         {
-            'room': room,
-            'username': username,
-            'text': text,
-            'timestamp': timestamp,
-            'read_status': 'sent'
+            "room": room,
+            "username": username,
+            "text": text,
+            "timestamp": timestamp,
+            "read_status": "sent"
         },
         to=room
     )
 
 
-# =========================================
+# =====================================================
 # START
-# =========================================
+# =====================================================
 
-if __name__ == '__main__':
+if __name__ == "__main__":
 
     init_db()
 
+    port = int(
+        os.environ.get("PORT", 8080)
+    )
+
     socketio.run(
         app,
-        host='0.0.0.0',
-        port=8080,
-        debug=True
+        host="0.0.0.0",
+        port=port
     )
