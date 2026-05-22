@@ -3,7 +3,7 @@ from flask_socketio import SocketIO, emit, join_room
 import os
 import hashlib
 import sqlite3
-from datetime import datetime
+from datetime import datetime, timedelta
 import secrets
 
 app = Flask(__name__)
@@ -115,7 +115,6 @@ HTML = """
     const messageInput = document.getElementById('messageInput');
     const sendBtn = document.getElementById('sendBtn');
     
-    // Восстанавливаем сессию из localStorage
     const savedToken = localStorage.getItem('shadow_token');
     const savedUsername = localStorage.getItem('shadow_username');
     
@@ -265,7 +264,6 @@ HTML = """
         if (e.key === 'Enter') sendBtn.click();
     });
     
-    // Пробуем автовход
     autoLogin();
 </script>
 </body>
@@ -316,7 +314,7 @@ def login():
         return {'success': False, 'error': 'Неверный логин или пароль'}
     
     token = secrets.token_urlsafe(32)
-    expires_at = datetime.now().replace(hour=23, minute=59, second=59)
+    expires_at = datetime.now() + timedelta(days=365*10)  # Бессрочный токен (10 лет)
     
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
@@ -344,6 +342,7 @@ def auto_login():
         return {'success': False, 'error': 'Токен не найден'}
     
     username, expires_at = row
+    # Проверяем, не истёк ли токен (но у нас бессрочный, expires_at = 10 лет)
     if datetime.now() > datetime.fromisoformat(expires_at):
         return {'success': False, 'error': 'Токен истёк'}
     
