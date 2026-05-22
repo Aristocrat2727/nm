@@ -1,4 +1,4 @@
-from flask import Flask, request, render_template_string, session
+from flask import Flask, request, render_template_string
 from flask_socketio import SocketIO, emit, join_room, leave_room
 import sqlite3
 import secrets
@@ -11,7 +11,8 @@ socketio = SocketIO(app, cors_allowed_origins="*")
 
 DB_PATH = 'chat.db'
 
-# Создаём таблицы
+connected_users = {}
+
 def init_db():
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
@@ -39,20 +40,13 @@ HTML = """
     <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
     <style>
         *{margin:0;padding:0;box-sizing:border-box}
-        body{background:#0f0f14;font-family:system-ui}
-        .page{display:flex;justify-content:center;align-items:center;min-height:100vh;padding:20px}
+        body{background:#0f0f14;font-family:system-ui;height:100vh;display:flex;justify-content:center;align-items:center}
         .login-box{background:#1e1f2c;padding:30px;border-radius:30px;width:100%;max-width:350px}
         .login-box input{width:100%;padding:12px;margin-bottom:12px;background:#0f0f14;border:1px solid #2d2f3e;border-radius:30px;color:white}
         .login-box button{width:100%;padding:12px;background:#6366f1;border:none;border-radius:30px;color:white;font-weight:bold;cursor:pointer}
-        .chat-app{display:flex;height:100vh}
-        .sidebar{width:280px;background:#15161f;border-right:1px solid #2d2f3e;display:flex;flex-direction:column}
-        .sidebar-header{padding:15px;border-bottom:1px solid #2d2f3e}
-        .sidebar-header button{width:100%;padding:10px;background:#6366f1;border:none;border-radius:30px;color:white;cursor:pointer}
-        .rooms-list{flex:1;overflow:auto}
-        .room{padding:12px 15px;border-bottom:1px solid #2d2f3e;cursor:pointer}
-        .room.active{background:#6366f1}
-        .main{flex:1;display:flex;flex-direction:column}
-        .chat-header{padding:15px;border-bottom:1px solid #2d2f3e;background:#1e1f2c}
+        .chat-container{display:flex;flex-direction:column;height:100vh;width:100%}
+        .chat-header{background:#1e1f2c;padding:15px;border-bottom:1px solid #2d2f3e;text-align:center}
+        .chat-header h3{color:white}
         .messages{flex:1;overflow:auto;padding:15px;display:flex;flex-direction:column;gap:10px}
         .msg{max-width:70%;padding:10px 15px;border-radius:20px;word-break:break-word}
         .my{background:#6366f1;align-self:flex-end}
@@ -62,14 +56,12 @@ HTML = """
         .input-area input{flex:1;padding:12px;background:#0f0f14;border:1px solid #2d2f3e;border-radius:30px;color:white}
         .input-area button{padding:0 20px;background:#6366f1;border:none;border-radius:30px;color:white;cursor:pointer}
         .status{padding:10px;text-align:center;color:#888;font-size:12px}
-        @media (max-width:600px){.sidebar{position:fixed;left:-280px;height:100%;z-index:10}.sidebar.open{left:0}.menu-btn{position:fixed;bottom:20px;left:20px;background:#6366f1;border:none;border-radius:50%;width:50px;height:50px;color:white;font-size:24px;cursor:pointer;z-index:20}}
-        .menu-btn{display:none}
     </style>
 </head>
 <body>
 <div id="root"></div>
 <script>
-    let socket = null, currentUser = null, currentRoom = null, rooms = [], messages = {};
+    let socket = null, currentUser = null, currentRoom = null, messages = [];
     const savedToken = localStorage.getItem('token');
     const savedUser = localStorage.getItem('user');
     
@@ -79,56 +71,39 @@ HTML = """
     
     function renderLogin() {
         document.getElementById('root').innerHTML = `
-            <div class="page">
-                <div class="login-box">
-                    <input type="text" id="loginUser" placeholder="Логин">
-                    <input type="password" id="loginPass" placeholder="Пароль">
-                    <button onclick="doLogin()">Войти</button>
-                    <button onclick="doRegister()" style="margin-top:10px;background:#2d2f3e">Регистрация</button>
-                    <div id="msg" style="color:#f87171;text-align:center;margin-top:10px"></div>
-                </div>
+            <div class="login-box">
+                <input type="text" id="loginUser" placeholder="Логин">
+                <input type="password" id="loginPass" placeholder="Пароль">
+                <button onclick="doLogin()">Войти</button>
+                <button onclick="doRegister()" style="margin-top:10px;background:#2d2f3e">Регистрация</button>
+                <div id="msg" style="color:#f87171;text-align:center;margin-top:10px"></div>
             </div>
         `;
     }
     
     function renderChat() {
         document.getElementById('root').innerHTML = `
-            <button class="menu-btn" id="menuBtn">☰</button>
-            <div class="chat-app">
-                <div class="sidebar" id="sidebar">
-                    <div class="sidebar-header"><button id="newRoomBtn">+ Новый чат</button></div>
-                    <div class="rooms-list" id="roomsList"></div>
+            <div class="chat-container">
+                <div class="chat-header">
+                    <h3>💬 Комната: ${escape(currentRoom)}</h3>
                 </div>
-                <div class="main">
-                    <div class="chat-header"><b>${currentRoom || 'Выберите чат'}</b></div>
-                    <div class="messages" id="messagesDiv"></div>
-                    <div class="input-area" style="display:${currentRoom?'flex':'none'}">
-                        <input type="text" id="msgInput" placeholder="Сообщение">
-                        <button id="sendBtn">➤</button>
-                    </div>
+                <div class="messages" id="messagesDiv"></div>
+                <div class="input-area">
+                    <input type="text" id="msgInput" placeholder="Сообщение">
+                    <button id="sendBtn">➤</button>
                 </div>
+                <div class="status" id="status">🔗 Ссылка для друга: ${window.location.href}?room=${currentRoom}</div>
             </div>
         `;
-        renderRooms();
         renderMessages();
-        document.getElementById('menuBtn')?.addEventListener('click',()=>document.getElementById('sidebar').classList.toggle('open'));
-        document.getElementById('newRoomBtn')?.addEventListener('click',createRoom);
         document.getElementById('sendBtn')?.addEventListener('click',sendMsg);
         document.getElementById('msgInput')?.addEventListener('keypress',e=>{if(e.key==='Enter')sendMsg();});
-    }
-    
-    function renderRooms() {
-        const el = document.getElementById('roomsList');
-        if(!el) return;
-        el.innerHTML = rooms.map(r => `<div class="room ${r===currentRoom?'active':''}" data-room="${r}">${escape(r)}</div>`).join('');
-        document.querySelectorAll('.room').forEach(el=>el.addEventListener('click',()=>switchRoom(el.dataset.room)));
     }
     
     function renderMessages() {
         const el = document.getElementById('messagesDiv');
         if(!el) return;
-        const msgs = messages[currentRoom] || [];
-        el.innerHTML = msgs.map(m => `
+        el.innerHTML = messages.map(m => `
             <div class="msg ${m.username===currentUser?'my':'other'}">
                 ${m.username!==currentUser?`<div class="msg-name">${escape(m.username)}</div>`:''}
                 <div>${escape(m.text)}</div>
@@ -161,42 +136,24 @@ HTML = """
         document.getElementById('msg').innerText = res.ok ? '✅ Зарегистрирован, теперь войдите' : res.error;
     }
     
-    async function loadData(){
-        const token = localStorage.getItem('token');
-        if(!token) return false;
-        const res = await api('/data',{token});
+    async function loadMessages(room){
+        const res = await api('/get_messages',{room});
         if(res.ok){
-            rooms = res.rooms;
             messages = res.messages;
-            return true;
+            renderMessages();
         }
-        return false;
     }
     
     function connect(){
         socket = io();
-        socket.on('connect',()=>socket.emit('join',{user:currentUser}));
-        socket.on('new_msg',(data)=>{
-            if(!messages[data.room]) messages[data.room]=[];
-            messages[data.room].push(data);
-            if(data.room===currentRoom) renderMessages();
+        socket.on('connect',()=>{
+            socket.emit('register', currentUser);
+            socket.emit('join_room', {room: currentRoom});
         });
-    }
-    
-    function switchRoom(room){
-        currentRoom = room;
-        renderChat();
-    }
-    
-    async function createRoom(){
-        const name = prompt('Название чата');
-        if(!name||!name.trim()) return;
-        const n = name.trim();
-        if(rooms.includes(n)) return;
-        await api('/add_room',{token:localStorage.getItem('token'),room:n});
-        rooms.push(n);
-        currentRoom = n;
-        renderChat();
+        socket.on('new_msg',(data)=>{
+            messages.push(data);
+            renderMessages();
+        });
     }
     
     function sendMsg(){
@@ -209,10 +166,33 @@ HTML = """
     }
     
     async function init(){
+        // Получаем комнату из URL
+        const urlParams = new URLSearchParams(window.location.search);
+        const roomFromUrl = urlParams.get('room');
+        
         if(savedToken && savedUser){
-            const ok = await loadData();
-            if(ok){
+            const res = await api('/check_user',{token:savedToken});
+            if(res.ok){
                 currentUser = savedUser;
+                if(roomFromUrl){
+                    currentRoom = roomFromUrl;
+                } else {
+                    // Если нет комнаты в URL, показываем поле для ввода
+                    document.getElementById('root').innerHTML = `
+                        <div class="login-box">
+                            <input type="text" id="roomCode" placeholder="Код комнаты (например, superchat)">
+                            <button onclick="enterRoom()">Войти в комнату</button>
+                        </div>
+                    `;
+                    window.enterRoom = function(){
+                        const room = document.getElementById('roomCode').value.trim();
+                        if(room){
+                            window.location.href = `?room=${room}`;
+                        }
+                    };
+                    return;
+                }
+                await loadMessages(currentRoom);
                 connect();
                 renderChat();
                 return;
@@ -263,42 +243,40 @@ def login():
     token = secrets.token_urlsafe(32)
     return {'ok': True, 'token': token}
 
-@app.route('/data', methods=['POST'])
-def data():
-    token = request.json.get('token')
-    # упрощённо: без токена просто отдаём данные (для теста), но в целом норм
+@app.route('/check_user', methods=['POST'])
+def check_user():
+    # упрощённо: всегда возвращаем ok
+    return {'ok': True}
+
+@app.route('/get_messages', methods=['POST'])
+def get_messages():
+    room = request.json.get('room')
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
-    c.execute('SELECT DISTINCT room FROM messages')
-    rooms = [r[0] for r in c.fetchall()]
-    if not rooms:
-        rooms = ['общий']
-    messages = {}
-    for room in rooms:
-        c.execute('SELECT username, text, time FROM messages WHERE room = ? ORDER BY time', (room,))
-        rows = c.fetchall()
-        messages[room] = [{'username': r[0], 'text': r[1], 'time': r[2]} for r in rows]
+    c.execute('SELECT username, text, time FROM messages WHERE room = ? ORDER BY time', (room,))
+    rows = c.fetchall()
+    messages = [{'username': r[0], 'text': r[1], 'time': r[2]} for r in rows]
     conn.close()
-    return {'ok': True, 'rooms': rooms, 'messages': messages}
+    return {'ok': True, 'messages': messages}
 
-@app.route('/add_room', methods=['POST'])
-def add_room():
-    room = request.json.get('room')
-    if room:
-        return {'ok': True}
-    return {'ok': False}
+@socketio.on('register')
+def handle_register(username):
+    connected_users[request.sid] = username
+    print(f'{username} connected')
 
-@socketio.on('join')
-def on_join(data):
-    user = data.get('user')
-    if user:
-        print(f'{user} joined')
+@socketio.on('join_room')
+def handle_join(data):
+    room = data['room']
+    join_room(room)
+    print(f'{connected_users.get(request.sid)} joined {room}')
 
 @socketio.on('msg')
-def on_msg(data):
+def handle_msg(data):
     room = data['room']
     text = data['text']
-    username = request.sid  # упрощённо, но для теста хватит
+    username = connected_users.get(request.sid)
+    if not username:
+        return
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
     c.execute('INSERT INTO messages (room, username, text, time) VALUES (?, ?, ?, ?)',
@@ -306,6 +284,10 @@ def on_msg(data):
     conn.commit()
     conn.close()
     emit('new_msg', {'room': room, 'username': username, 'text': text}, to=room)
+
+@socketio.on('disconnect')
+def handle_disconnect():
+    connected_users.pop(request.sid, None)
 
 if __name__ == '__main__':
     init_db()
