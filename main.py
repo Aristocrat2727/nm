@@ -1168,12 +1168,11 @@ if __name__ == "__main__":
 
     init_db()
 
-    port = int(
-        os.environ.get("PORT", 8080)
-    )
+    port = int(os.environ.get("PORT", 8080))
 
     socketio.run(
         app,
         host="0.0.0.0",
-        port=port
+        port=port,
+        allow_unsafe_werkzeug=True
     )
