@@ -4,10 +4,11 @@ import os
 import hashlib
 import sqlite3
 from datetime import datetime
+import secrets
 
 app = Flask(__name__)
 app.config['SECRET_KEY'] = 'supersecretkey'
-socketio = SocketIO(app, cors_allowed_origins="*")
+socketio = SocketIO(app, cors_allowed_origins="*", ping_timeout=60, ping_interval=25)
 
 DB_PATH = '/app/data/shadow_chat.db'
 
@@ -25,6 +26,11 @@ def init_db():
         username TEXT NOT NULL,
         text TEXT NOT NULL,
         timestamp TIMESTAMP
+    )''')
+    c.execute('''CREATE TABLE IF NOT EXISTS sessions (
+        token TEXT PRIMARY KEY,
+        username TEXT NOT NULL,
+        expires_at TIMESTAMP
     )''')
     conn.commit()
     conn.close()
@@ -109,6 +115,10 @@ HTML = """
     const messageInput = document.getElementById('messageInput');
     const sendBtn = document.getElementById('sendBtn');
     
+    // Восстанавливаем сессию из localStorage
+    const savedToken = localStorage.getItem('shadow_token');
+    const savedUsername = localStorage.getItem('shadow_username');
+    
     function addMessage(text, isMy, username = '') {
         const div = document.createElement('div');
         div.className = `message ${isMy ? 'my-message' : 'other-message'}`;
@@ -147,6 +157,22 @@ HTML = """
         return res.json();
     }
     
+    async function autoLogin() {
+        if (!savedToken) return false;
+        const result = await apiRequest('/auto_login', { token: savedToken });
+        if (result.success) {
+            currentUser = savedUsername;
+            authPanel.style.display = 'none';
+            roomPanel.style.display = 'flex';
+            statusSpan.innerText = `✅ С возвращением, ${currentUser}! Введите код комнаты.`;
+            return true;
+        } else {
+            localStorage.removeItem('shadow_token');
+            localStorage.removeItem('shadow_username');
+            return false;
+        }
+    }
+    
     document.getElementById('loginBtn').onclick = async () => {
         const username = document.getElementById('username').value.trim();
         const password = document.getElementById('password').value.trim();
@@ -157,6 +183,8 @@ HTML = """
         const result = await apiRequest('/login', { username, password });
         if (result.success) {
             currentUser = username;
+            localStorage.setItem('shadow_token', result.token);
+            localStorage.setItem('shadow_username', username);
             authPanel.style.display = 'none';
             roomPanel.style.display = 'flex';
             statusSpan.innerText = `✅ Добро пожаловать, ${username}! Введите код комнаты.`;
@@ -180,23 +208,26 @@ HTML = """
         }
     };
     
-    joinBtn.onclick = () => {
-        const room = roomCodeInput.value.trim();
-        if (!room) {
-            statusSpan.innerText = '❌ Введите код комнаты';
-            return;
-        }
+    function connectToRoom(room) {
         if (socket) socket.disconnect();
         
-        socket = io();
-        socket.emit('join', { room, username: currentUser });
-        currentRoom = room;
+        socket = io({
+            reconnection: true,
+            reconnectionAttempts: Infinity,
+            reconnectionDelay: 1000,
+            reconnectionDelayMax: 5000
+        });
+        
+        socket.on('connect', () => {
+            socket.emit('join', { room, username: currentUser });
+            currentRoom = room;
+            statusSpan.innerText = `✅ Комната: ${room}. Пишите сообщения.`;
+            messageInput.focus();
+        });
         
         socket.on('history', (history) => {
             loadHistory(history);
             inputArea.style.display = 'flex';
-            statusSpan.innerText = `✅ Комната: ${room}. Пишите сообщения.`;
-            messageInput.focus();
         });
         
         socket.on('new_message', (data) => {
@@ -205,8 +236,21 @@ HTML = """
         });
         
         socket.on('disconnect', () => {
-            statusSpan.innerText = 'Потеряно соединение. Перезагрузите страницу.';
+            statusSpan.innerText = '🔄 Потеряно соединение, переподключаюсь...';
         });
+        
+        socket.on('connect_error', () => {
+            statusSpan.innerText = '⚠️ Ошибка соединения, попытка reconnect...';
+        });
+    }
+    
+    joinBtn.onclick = () => {
+        const room = roomCodeInput.value.trim();
+        if (!room) {
+            statusSpan.innerText = '❌ Введите код комнаты';
+            return;
+        }
+        connectToRoom(room);
     };
     
     sendBtn.onclick = () => {
@@ -220,6 +264,9 @@ HTML = """
     messageInput.addEventListener('keypress', (e) => {
         if (e.key === 'Enter') sendBtn.click();
     });
+    
+    // Пробуем автовход
+    autoLogin();
 </script>
 </body>
 </html>
@@ -268,7 +315,39 @@ def login():
     if not row or row[0] != hash_password(password):
         return {'success': False, 'error': 'Неверный логин или пароль'}
     
-    return {'success': True}
+    token = secrets.token_urlsafe(32)
+    expires_at = datetime.now().replace(hour=23, minute=59, second=59)
+    
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute('INSERT OR REPLACE INTO sessions (token, username, expires_at) VALUES (?, ?, ?)',
+              (token, username, expires_at))
+    conn.commit()
+    conn.close()
+    
+    return {'success': True, 'token': token}
+
+@app.route('/auto_login', methods=['POST'])
+def auto_login():
+    data = request.json
+    token = data.get('token')
+    if not token:
+        return {'success': False, 'error': 'Нет токена'}
+    
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute('SELECT username, expires_at FROM sessions WHERE token = ?', (token,))
+    row = c.fetchone()
+    conn.close()
+    
+    if not row:
+        return {'success': False, 'error': 'Токен не найден'}
+    
+    username, expires_at = row
+    if datetime.now() > datetime.fromisoformat(expires_at):
+        return {'success': False, 'error': 'Токен истёк'}
+    
+    return {'success': True, 'username': username}
 
 @socketio.on('join')
 def handle_join(data):
