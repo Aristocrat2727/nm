@@ -9,7 +9,7 @@ app = Flask(__name__)
 app.config['SECRET_KEY'] = 'supersecretkey'
 socketio = SocketIO(app, cors_allowed_origins="*")
 
-DB_PATH = '/app/data/shadow_chat.db'  # для Railway Volume
+DB_PATH = '/app/data/shadow_chat.db'
 
 def init_db():
     conn = sqlite3.connect(DB_PATH)
@@ -212,7 +212,7 @@ HTML = """
     sendBtn.onclick = () => {
         const text = messageInput.value.trim();
         if (text && socket && currentRoom) {
-            socket.emit('message', { room: currentRoom, text });
+            socket.emit('message', { room: currentRoom, text, username: currentUser });
             messageInput.value = '';
         }
     };
@@ -290,7 +290,9 @@ def handle_join(data):
 def handle_message(data):
     room = data['room']
     text = data['text']
-    username = data.get('username', request.sid)  # пока так, но нужно сессию
+    username = data.get('username')
+    if not username:
+        return
     
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
