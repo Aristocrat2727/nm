@@ -25,19 +25,12 @@ def init_db():
         room TEXT NOT NULL,
         username TEXT NOT NULL,
         text TEXT NOT NULL,
-        timestamp TIMESTAMP,
-        read_status TEXT DEFAULT 'sent'
+        timestamp TIMESTAMP
     )''')
     c.execute('''CREATE TABLE IF NOT EXISTS sessions (
         token TEXT PRIMARY KEY,
         username TEXT NOT NULL,
         expires_at TIMESTAMP
-    )''')
-    c.execute('''CREATE TABLE IF NOT EXISTS user_rooms (
-        username TEXT NOT NULL,
-        room TEXT NOT NULL,
-        last_read TIMESTAMP,
-        PRIMARY KEY (username, room)
     )''')
     conn.commit()
     conn.close()
@@ -50,47 +43,38 @@ HTML = """
 <html lang="ru">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes, viewport-fit=cover">
-    <title>Shadow Chat — как Telegram</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
+    <title>Shadow Chat</title>
     <script src="https://cdn.socket.io/4.5.0/socket.io.min.js"></script>
     <style>
         *{margin:0;padding:0;box-sizing:border-box}
-        body{background:#0f0f14;font-family:system-ui;height:100vh;width:100vw;overflow:hidden}
-        .app{display:flex;width:100%;height:100%;background:#1e1f2c}
-        .sidebar{width:280px;background:#0f0f14;border-right:1px solid #2d2f3e;display:flex;flex-direction:column;flex-shrink:0}
-        .sidebar-header{padding:16px;border-bottom:1px solid #2d2f3e;color:#f1f5f9;font-weight:bold}
+        body{background:#0f0f14;font-family:system-ui;height:100vh;display:flex;justify-content:center;align-items:center}
+        .auth-panel{background:#1e1f2c;border-radius:40px;padding:32px;width:350px}
+        .auth-panel input{width:100%;background:#0f0f14;border:1px solid #2d2f3e;border-radius:40px;padding:12px 16px;color:white;margin-bottom:12px}
+        .auth-panel button{background:#6366f1;border:none;border-radius:40px;padding:12px;color:white;font-weight:bold;cursor:pointer;width:100%}
+        .auth-panel .buttons{display:flex;gap:12px;margin-top:12px}
+        .auth-panel .buttons button{flex:1}
+        .chat-container{display:flex;width:100vw;height:100vh;background:#1e1f2c}
+        .sidebar{width:280px;background:#0f0f14;border-right:1px solid #2d2f3e;display:flex;flex-direction:column}
+        .sidebar-header{padding:16px;border-bottom:1px solid #2d2f3e;color:white;font-weight:bold}
         .rooms-list{flex:1;overflow-y:auto}
-        .room-item{padding:12px 16px;border-bottom:1px solid #2d2f3e;cursor:pointer;transition:0.1s}
-        .room-item:hover{background:#2d2f3e}
+        .room-item{padding:12px 16px;border-bottom:1px solid #2d2f3e;cursor:pointer;color:#e2e8f0}
         .room-item.active{background:#6366f1}
-        .room-name{color:#e2e8f0;font-weight:bold;display:flex;justify-content:space-between;align-items:center}
-        .room-preview{font-size:11px;color:#7c8ba0;margin-top:4px}
-        .unread-badge{background:#ef4444;color:white;border-radius:20px;padding:2px 8px;font-size:10px}
-        .chat-area{flex:1;display:flex;flex-direction:column;min-width:0}
-        .chat-header{padding:16px;border-bottom:1px solid #2d2f3e;display:flex;justify-content:space-between;align-items:center;background:#1e1f2c}
-        .chat-header h3{color:#f1f5f9;font-size:1.1rem}
+        .room-name{font-weight:bold}
+        .chat-area{flex:1;display:flex;flex-direction:column}
+        .chat-header{padding:16px;border-bottom:1px solid #2d2f3e;display:flex;justify-content:space-between}
+        .chat-header h3{color:white}
         .leave-btn{background:#2d2f3e;border:none;border-radius:40px;padding:6px 16px;color:white;cursor:pointer}
         .messages{flex:1;overflow-y:auto;padding:16px;display:flex;flex-direction:column;gap:12px}
         .message{display:flex;max-width:80%}
         .my-message{align-self:flex-end;flex-direction:row-reverse}
-        .bubble{background:#2d2f3e;padding:10px 14px;border-radius:20px;font-size:14px;line-height:1.4;word-break:break-word}
+        .bubble{background:#2d2f3e;padding:10px 14px;border-radius:20px;color:#e2e8f0}
         .my-message .bubble{background:#6366f1;color:white}
-        .message-info{font-size:10px;color:#7c8ba0;margin-top:4px;display:flex;gap:4px;justify-content:flex-end}
-        .input-area{display:flex;gap:8px;padding:16px;border-top:1px solid #2d2f3e;background:#0f0f14}
-        .input-area input{flex:1;background:#1e1f2c;border:1px solid #2d2f3e;border-radius:40px;padding:12px;color:white;outline:none}
-        .input-area input:focus{border-color:#6366f1}
-        .input-area button{background:#6366f1;border:none;border-radius:40px;padding:0 20px;color:white;font-weight:bold;cursor:pointer}
-        .status{font-size:12px;color:#7c8ba0;text-align:center;padding:8px}
-        .auth-panel{display:flex;flex-direction:column;gap:12px;padding:20px;width:100%;max-width:400px;margin:auto}
-        .auth-panel input{background:#1e1f2c;border:1px solid #2d2f3e;border-radius:40px;padding:12px 16px;color:white}
-        .buttons{display:flex;gap:12px}
-        .buttons button{flex:1;background:#6366f1;border:none;border-radius:40px;padding:12px;color:white;font-weight:bold;cursor:pointer}
-        .hidden{display:none}
-        @media (max-width: 600px) {
-            .sidebar{position:fixed;left:-280px;transition:0.2s;height:100%;z-index:10}
-            .sidebar.open{left:0}
-            .menu-btn{display:block;position:fixed;bottom:20px;left:20px;background:#6366f1;border:none;border-radius:50%;width:50px;height:50px;color:white;font-size:24px;cursor:pointer;z-index:20}
-        }
+        .input-area{display:flex;gap:8px;padding:16px;border-top:1px solid #2d2f3e}
+        .input-area input{flex:1;background:#0f0f14;border:1px solid #2d2f3e;border-radius:40px;padding:12px;color:white}
+        .input-area button{background:#6366f1;border:none;border-radius:40px;padding:0 20px;color:white;cursor:pointer}
+        .status{padding:8px;text-align:center;color:#7c8ba0;font-size:12px}
+        @media (max-width:600px){.sidebar{position:fixed;left:-280px;height:100%;z-index:10}.sidebar.open{left:0}.menu-btn{position:fixed;bottom:20px;left:20px;background:#6366f1;border:none;border-radius:50%;width:50px;height:50px;color:white;font-size:24px;z-index:20}}
         .menu-btn{display:none}
     </style>
 </head>
@@ -102,54 +86,51 @@ HTML = """
     let currentRoom = null;
     let rooms = [];
     let messages = {};
-    let unreadCount = {};
     
     const savedToken = localStorage.getItem('shadow_token');
     const savedUsername = localStorage.getItem('shadow_username');
     
-    function render() {
-        const root = document.getElementById('root');
-        if (!currentUser) {
-            root.innerHTML = `
-                <div class="auth-panel">
-                    <input type="text" id="username" placeholder="Логин">
-                    <input type="password" id="password" placeholder="Пароль">
-                    <div class="buttons">
-                        <button id="loginBtn">Войти</button>
-                        <button id="registerBtn">Зарегистрироваться</button>
-                    </div>
-                    <div id="authStatus" style="color:#7c8ba0;text-align:center"></div>
+    function renderAuth() {
+        document.getElementById('root').innerHTML = `
+            <div class="auth-panel">
+                <input type="text" id="username" placeholder="Логин">
+                <input type="password" id="password" placeholder="Пароль">
+                <div class="buttons">
+                    <button id="loginBtn">Войти</button>
+                    <button id="registerBtn">Зарегистрироваться</button>
                 </div>
-            `;
-            document.getElementById('loginBtn')?.addEventListener('click', login);
-            document.getElementById('registerBtn')?.addEventListener('click', register);
-            return;
-        }
-        
-        root.innerHTML = `
+                <div id="authStatus" style="color:#7c8ba0;text-align:center;margin-top:12px"></div>
+            </div>
+        `;
+        document.getElementById('loginBtn').onclick = login;
+        document.getElementById('registerBtn').onclick = register;
+    }
+    
+    function renderChat() {
+        document.getElementById('root').innerHTML = `
             <button class="menu-btn" id="menuBtn">☰</button>
-            <div class="app">
+            <div class="chat-container">
                 <div class="sidebar" id="sidebar">
                     <div class="sidebar-header">📁 Чаты</div>
                     <div class="rooms-list" id="roomsList"></div>
                 </div>
                 <div class="chat-area">
                     <div class="chat-header">
-                        <h3 id="currentRoomName">${currentRoom || 'Выберите чат'}</h3>
-                        ${currentRoom ? `<button class="leave-btn" id="leaveBtn">🚪 Выйти</button>` : ''}
+                        <h3 id="roomTitle">${currentRoom || 'Выберите чат'}</h3>
+                        ${currentRoom ? `<button class="leave-btn" id="leaveBtn">Выйти</button>` : ''}
                     </div>
                     <div class="messages" id="messages"></div>
                     <div class="input-area" id="inputArea" style="display:${currentRoom ? 'flex' : 'none'}">
-                        <input type="text" id="messageInput" placeholder="Напиши сообщение..." autocomplete="off">
+                        <input type="text" id="messageInput" placeholder="Сообщение...">
                         <button id="sendBtn">➤</button>
                     </div>
-                    <div class="status" id="status"></div>
+                    <div class="status" id="status">Готов</div>
                 </div>
             </div>
         `;
         
         renderRoomsList();
-        if (currentRoom) renderMessages();
+        renderMessages();
         
         document.getElementById('menuBtn')?.addEventListener('click', () => {
             document.getElementById('sidebar').classList.toggle('open');
@@ -165,12 +146,8 @@ HTML = """
         const container = document.getElementById('roomsList');
         if (!container) return;
         container.innerHTML = rooms.map(room => `
-            <div class="room-item ${currentRoom === room.name ? 'active' : ''}" data-room="${room.name}">
-                <div class="room-name">
-                    <span>${escapeHtml(room.name)}</span>
-                    ${unreadCount[room.name] > 0 ? `<span class="unread-badge">${unreadCount[room.name]}</span>` : ''}
-                </div>
-                <div class="room-preview">${escapeHtml(room.lastMessage || 'Нет сообщений')}</div>
+            <div class="room-item ${currentRoom === room ? 'active' : ''}" data-room="${room}">
+                <div class="room-name">${escapeHtml(room)}</div>
             </div>
         `).join('');
         document.querySelectorAll('.room-item').forEach(el => {
@@ -187,9 +164,6 @@ HTML = """
                 <div class="bubble">
                     ${msg.username !== currentUser ? `<b>${escapeHtml(msg.username)}</b><br>` : ''}
                     ${escapeHtml(msg.text)}
-                    <div class="message-info">
-                        ${msg.username === currentUser ? (msg.read_status === 'read' ? '✓✓' : '✓') : ''}
-                    </div>
                 </div>
             </div>
         `).join('');
@@ -220,7 +194,7 @@ HTML = """
             localStorage.setItem('shadow_username', username);
             await loadUserData();
             connectSocket();
-            render();
+            renderChat();
         } else {
             document.getElementById('authStatus').innerText = result.error;
         }
@@ -238,63 +212,34 @@ HTML = """
         const result = await apiRequest('/user_data', { username: currentUser });
         if (result.success) {
             rooms = result.rooms;
-            unreadCount = result.unreadCount || {};
             messages = result.messages || {};
-            for (let room in messages) {
-                if (messages[room].length) {
-                    const last = messages[room][messages[room].length-1];
-                    const roomObj = rooms.find(r => r.name === room);
-                    if (roomObj) roomObj.lastMessage = last.text;
-                }
-            }
         }
     }
     
     function connectSocket() {
         if (socket) socket.disconnect();
-        socket = io({ reconnection: true, reconnectionAttempts: Infinity });
+        socket = io({ reconnection: true });
         socket.on('connect', () => {
             socket.emit('register', currentUser);
         });
         socket.on('new_message', (data) => {
             if (!messages[data.room]) messages[data.room] = [];
             messages[data.room].push(data);
-            const roomObj = rooms.find(r => r.name === data.room);
-            if (roomObj) roomObj.lastMessage = data.text;
-            if (data.room !== currentRoom) {
-                unreadCount[data.room] = (unreadCount[data.room] || 0) + 1;
-                if (Notification.permission === 'granted') {
-                    new Notification('Новое сообщение', { body: `${data.username}: ${data.text}` });
-                }
-            }
-            if (data.room === currentRoom) {
-                renderMessages();
-                socket.emit('mark_read', { room: data.room });
-            }
+            if (data.room === currentRoom) renderMessages();
             renderRoomsList();
-        });
-        socket.on('read_receipt', ({ room, username }) => {
-            if (messages[room]) {
-                messages[room].forEach(msg => {
-                    if (msg.username !== currentUser && msg.read_status !== 'read') msg.read_status = 'read';
-                });
-                if (room === currentRoom) renderMessages();
-            }
         });
     }
     
     function switchRoom(room) {
         currentRoom = room;
-        unreadCount[room] = 0;
-        if (socket) socket.emit('mark_read', { room });
-        render();
+        renderChat();
     }
     
     function leaveRoom() {
         if (currentRoom && socket) {
             socket.emit('leave_room', { room: currentRoom });
             currentRoom = null;
-            render();
+            renderChat();
         }
     }
     
@@ -307,22 +252,18 @@ HTML = """
     }
     
     async function autoLogin() {
-        if (!savedToken) { render(); return; }
+        if (!savedToken) { renderAuth(); return; }
         const result = await apiRequest('/auto_login', { token: savedToken });
         if (result.success) {
             currentUser = savedUsername;
             await loadUserData();
             connectSocket();
-            render();
+            renderChat();
         } else {
             localStorage.removeItem('shadow_token');
             localStorage.removeItem('shadow_username');
-            render();
+            renderAuth();
         }
-    }
-    
-    if (Notification.permission !== 'granted' && Notification.permission !== 'denied') {
-        Notification.requestPermission();
     }
     
     autoLogin();
@@ -412,40 +353,21 @@ def user_data():
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
     
-    c.execute('SELECT DISTINCT room FROM messages WHERE username = ? UNION SELECT DISTINCT room FROM messages WHERE room IN (SELECT room FROM messages WHERE username = ?)', (username, username))
-    room_names = [row[0] for row in c.fetchall()]
-    rooms = [{'name': r} for r in room_names]
+    c.execute('SELECT DISTINCT room FROM messages WHERE username = ?', (username,))
+    rooms = [row[0] for row in c.fetchall()]
     
-    unreadCount = {}
     messages_dict = {}
-    
-    for room_name in room_names:
-        c.execute('SELECT id, username, text, timestamp, read_status FROM messages WHERE room = ? ORDER BY timestamp', (room_name,))
+    for room in rooms:
+        c.execute('SELECT username, text, timestamp FROM messages WHERE room = ? ORDER BY timestamp', (room,))
         rows = c.fetchall()
-        msgs = [{'id': r[0], 'username': r[1], 'text': r[2], 'timestamp': r[3], 'read_status': r[4]} for r in rows]
-        messages_dict[room_name] = msgs
-        
-        c.execute('SELECT last_read FROM user_rooms WHERE username = ? AND room = ?', (username, room_name))
-        last_read_row = c.fetchone()
-        last_read = last_read_row[0] if last_read_row else None
-        
-        if last_read:
-            unreadCount[room_name] = sum(1 for m in msgs if m['username'] != username and m['timestamp'] > last_read)
-        else:
-            unreadCount[room_name] = sum(1 for m in msgs if m['username'] != username)
+        messages_dict[room] = [{'username': r[0], 'text': r[1], 'timestamp': r[2]} for r in rows]
     
     conn.close()
-    return {'success': True, 'rooms': rooms, 'unreadCount': unreadCount, 'messages': messages_dict}
+    return {'success': True, 'rooms': rooms, 'messages': messages_dict}
 
 @socketio.on('register')
 def handle_register(username):
     print(f'User {username} connected')
-
-@socketio.on('join')
-def handle_join(data):
-    room = data['room']
-    username = data['username']
-    join_room(room)
 
 @socketio.on('message')
 def handle_message(data):
@@ -455,29 +377,12 @@ def handle_message(data):
     
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
-    c.execute('INSERT INTO messages (room, username, text, timestamp, read_status) VALUES (?, ?, ?, ?, ?)',
-              (room, username, text, datetime.now(), 'sent'))
-    msg_id = c.lastrowid
+    c.execute('INSERT INTO messages (room, username, text, timestamp) VALUES (?, ?, ?, ?)',
+              (room, username, text, datetime.now()))
     conn.commit()
     conn.close()
     
-    emit('new_message', {'room': room, 'username': username, 'text': text, 'id': msg_id, 'read_status': 'sent'}, to=room)
-
-@socketio.on('mark_read')
-def handle_mark_read(data):
-    room = data['room']
-    username = request.sid
-    
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
-    c.execute('INSERT OR REPLACE INTO user_rooms (username, room, last_read) VALUES (?, ?, ?)',
-              (username, room, datetime.now()))
-    c.execute('UPDATE messages SET read_status = "read" WHERE room = ? AND username != ? AND read_status = "sent"',
-              (room, username))
-    conn.commit()
-    conn.close()
-    
-    emit('read_receipt', {'room': room, 'username': username}, to=room)
+    emit('new_message', {'room': room, 'username': username, 'text': text}, to=room)
 
 @socketio.on('leave_room')
 def handle_leave(data):
