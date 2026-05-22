@@ -26,7 +26,7 @@ def init_db():
         username TEXT NOT NULL,
         text TEXT NOT NULL,
         timestamp TIMESTAMP,
-        read_status TEXT DEFAULT 'sent'  -- 'sent' или 'read'
+        read_status TEXT DEFAULT 'sent'
     )''')
     c.execute('''CREATE TABLE IF NOT EXISTS sessions (
         token TEXT PRIMARY KEY,
@@ -50,34 +50,35 @@ HTML = """
 <html lang="ru">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes, viewport-fit=cover">
     <title>Shadow Chat — как Telegram</title>
     <script src="https://cdn.socket.io/4.5.0/socket.io.min.js"></script>
     <style>
         *{margin:0;padding:0;box-sizing:border-box}
-        body{background:#0f0f14;font-family:system-ui;height:100vh;display:flex;justify-content:center;align-items:center;padding:20px}
-        .app{display:flex;width:100%;max-width:900px;height:90%;background:#1e1f2c;border-radius:40px;overflow:hidden}
-        .sidebar{width:280px;background:#0f0f14;border-right:1px solid #2d2f3e;display:flex;flex-direction:column}
+        body{background:#0f0f14;font-family:system-ui;height:100vh;width:100vw;overflow:hidden}
+        .app{display:flex;width:100%;height:100%;background:#1e1f2c}
+        .sidebar{width:280px;background:#0f0f14;border-right:1px solid #2d2f3e;display:flex;flex-direction:column;flex-shrink:0}
         .sidebar-header{padding:16px;border-bottom:1px solid #2d2f3e;color:#f1f5f9;font-weight:bold}
         .rooms-list{flex:1;overflow-y:auto}
         .room-item{padding:12px 16px;border-bottom:1px solid #2d2f3e;cursor:pointer;transition:0.1s}
         .room-item:hover{background:#2d2f3e}
         .room-item.active{background:#6366f1}
-        .room-name{color:#e2e8f0;font-weight:bold}
+        .room-name{color:#e2e8f0;font-weight:bold;display:flex;justify-content:space-between;align-items:center}
         .room-preview{font-size:11px;color:#7c8ba0;margin-top:4px}
-        .unread-badge{background:#ef4444;color:white;border-radius:20px;padding:2px 8px;font-size:10px;margin-left:8px}
-        .chat-area{flex:1;display:flex;flex-direction:column}
-        .chat-header{padding:16px;border-bottom:1px solid #2d2f3e;display:flex;justify-content:space-between;align-items:center}
-        .chat-header h3{color:#f1f5f9}
+        .unread-badge{background:#ef4444;color:white;border-radius:20px;padding:2px 8px;font-size:10px}
+        .chat-area{flex:1;display:flex;flex-direction:column;min-width:0}
+        .chat-header{padding:16px;border-bottom:1px solid #2d2f3e;display:flex;justify-content:space-between;align-items:center;background:#1e1f2c}
+        .chat-header h3{color:#f1f5f9;font-size:1.1rem}
         .leave-btn{background:#2d2f3e;border:none;border-radius:40px;padding:6px 16px;color:white;cursor:pointer}
         .messages{flex:1;overflow-y:auto;padding:16px;display:flex;flex-direction:column;gap:12px}
-        .message{display:flex;gap:10px;max-width:70%}
+        .message{display:flex;max-width:80%}
         .my-message{align-self:flex-end;flex-direction:row-reverse}
         .bubble{background:#2d2f3e;padding:10px 14px;border-radius:20px;font-size:14px;line-height:1.4;word-break:break-word}
         .my-message .bubble{background:#6366f1;color:white}
         .message-info{font-size:10px;color:#7c8ba0;margin-top:4px;display:flex;gap:4px;justify-content:flex-end}
-        .input-area{display:flex;gap:8px;padding:16px;border-top:1px solid #2d2f3e}
+        .input-area{display:flex;gap:8px;padding:16px;border-top:1px solid #2d2f3e;background:#0f0f14}
         .input-area input{flex:1;background:#1e1f2c;border:1px solid #2d2f3e;border-radius:40px;padding:12px;color:white;outline:none}
+        .input-area input:focus{border-color:#6366f1}
         .input-area button{background:#6366f1;border:none;border-radius:40px;padding:0 20px;color:white;font-weight:bold;cursor:pointer}
         .status{font-size:12px;color:#7c8ba0;text-align:center;padding:8px}
         .auth-panel{display:flex;flex-direction:column;gap:12px;padding:20px;width:100%;max-width:400px;margin:auto}
@@ -85,10 +86,16 @@ HTML = """
         .buttons{display:flex;gap:12px}
         .buttons button{flex:1;background:#6366f1;border:none;border-radius:40px;padding:12px;color:white;font-weight:bold;cursor:pointer}
         .hidden{display:none}
+        @media (max-width: 600px) {
+            .sidebar{position:fixed;left:-280px;transition:0.2s;height:100%;z-index:10}
+            .sidebar.open{left:0}
+            .menu-btn{display:block;position:fixed;bottom:20px;left:20px;background:#6366f1;border:none;border-radius:50%;width:50px;height:50px;color:white;font-size:24px;cursor:pointer;z-index:20}
+        }
+        .menu-btn{display:none}
     </style>
 </head>
 <body>
-<div id="app"></div>
+<div id="root"></div>
 <script>
     let socket = null;
     let currentUser = null;
@@ -101,9 +108,9 @@ HTML = """
     const savedUsername = localStorage.getItem('shadow_username');
     
     function render() {
-        const app = document.getElementById('app');
+        const root = document.getElementById('root');
         if (!currentUser) {
-            app.innerHTML = `
+            root.innerHTML = `
                 <div class="auth-panel">
                     <input type="text" id="username" placeholder="Логин">
                     <input type="password" id="password" placeholder="Пароль">
@@ -114,14 +121,15 @@ HTML = """
                     <div id="authStatus" style="color:#7c8ba0;text-align:center"></div>
                 </div>
             `;
-            document.getElementById('loginBtn').onclick = () => login();
-            document.getElementById('registerBtn').onclick = () => register();
+            document.getElementById('loginBtn')?.addEventListener('click', login);
+            document.getElementById('registerBtn')?.addEventListener('click', register);
             return;
         }
         
-        app.innerHTML = `
+        root.innerHTML = `
+            <button class="menu-btn" id="menuBtn">☰</button>
             <div class="app">
-                <div class="sidebar">
+                <div class="sidebar" id="sidebar">
                     <div class="sidebar-header">📁 Чаты</div>
                     <div class="rooms-list" id="roomsList"></div>
                 </div>
@@ -143,6 +151,9 @@ HTML = """
         renderRoomsList();
         if (currentRoom) renderMessages();
         
+        document.getElementById('menuBtn')?.addEventListener('click', () => {
+            document.getElementById('sidebar').classList.toggle('open');
+        });
         document.getElementById('leaveBtn')?.addEventListener('click', leaveRoom);
         document.getElementById('sendBtn')?.addEventListener('click', sendMessage);
         document.getElementById('messageInput')?.addEventListener('keypress', (e) => {
@@ -156,10 +167,10 @@ HTML = """
         container.innerHTML = rooms.map(room => `
             <div class="room-item ${currentRoom === room.name ? 'active' : ''}" data-room="${room.name}">
                 <div class="room-name">
-                    ${room.name}
+                    <span>${escapeHtml(room.name)}</span>
                     ${unreadCount[room.name] > 0 ? `<span class="unread-badge">${unreadCount[room.name]}</span>` : ''}
                 </div>
-                <div class="room-preview">${room.lastMessage || 'Нет сообщений'}</div>
+                <div class="room-preview">${escapeHtml(room.lastMessage || 'Нет сообщений')}</div>
             </div>
         `).join('');
         document.querySelectorAll('.room-item').forEach(el => {
@@ -186,7 +197,7 @@ HTML = """
     }
     
     function escapeHtml(str) {
-        return str.replace(/[&<>]/g, m => m === '&' ? '&amp;' : m === '<' ? '&lt;' : '&gt;');
+        return String(str).replace(/[&<>]/g, m => m === '&' ? '&amp;' : m === '<' ? '&lt;' : '&gt;');
     }
     
     async function apiRequest(endpoint, data) {
@@ -229,6 +240,13 @@ HTML = """
             rooms = result.rooms;
             unreadCount = result.unreadCount || {};
             messages = result.messages || {};
+            for (let room in messages) {
+                if (messages[room].length) {
+                    const last = messages[room][messages[room].length-1];
+                    const roomObj = rooms.find(r => r.name === room);
+                    if (roomObj) roomObj.lastMessage = last.text;
+                }
+            }
         }
     }
     
@@ -241,13 +259,18 @@ HTML = """
         socket.on('new_message', (data) => {
             if (!messages[data.room]) messages[data.room] = [];
             messages[data.room].push(data);
+            const roomObj = rooms.find(r => r.name === data.room);
+            if (roomObj) roomObj.lastMessage = data.text;
             if (data.room !== currentRoom) {
                 unreadCount[data.room] = (unreadCount[data.room] || 0) + 1;
                 if (Notification.permission === 'granted') {
                     new Notification('Новое сообщение', { body: `${data.username}: ${data.text}` });
                 }
             }
-            if (data.room === currentRoom) renderMessages();
+            if (data.room === currentRoom) {
+                renderMessages();
+                socket.emit('mark_read', { room: data.room });
+            }
             renderRoomsList();
         });
         socket.on('read_receipt', ({ room, username }) => {
@@ -263,7 +286,7 @@ HTML = """
     function switchRoom(room) {
         currentRoom = room;
         unreadCount[room] = 0;
-        socket.emit('mark_read', { room });
+        if (socket) socket.emit('mark_read', { room });
         render();
     }
     
@@ -284,7 +307,7 @@ HTML = """
     }
     
     async function autoLogin() {
-        if (!savedToken) return;
+        if (!savedToken) { render(); return; }
         const result = await apiRequest('/auto_login', { token: savedToken });
         if (result.success) {
             currentUser = savedUsername;
@@ -390,28 +413,29 @@ def user_data():
     c = conn.cursor()
     
     c.execute('SELECT DISTINCT room FROM messages WHERE username = ? UNION SELECT DISTINCT room FROM messages WHERE room IN (SELECT room FROM messages WHERE username = ?)', (username, username))
-    rooms = [row[0] for row in c.fetchall()]
+    room_names = [row[0] for row in c.fetchall()]
+    rooms = [{'name': r} for r in room_names]
     
     unreadCount = {}
-    messages = {}
+    messages_dict = {}
     
-    for room in rooms:
-        c.execute('SELECT id, username, text, timestamp, read_status FROM messages WHERE room = ? ORDER BY timestamp', (room,))
+    for room_name in room_names:
+        c.execute('SELECT id, username, text, timestamp, read_status FROM messages WHERE room = ? ORDER BY timestamp', (room_name,))
         rows = c.fetchall()
         msgs = [{'id': r[0], 'username': r[1], 'text': r[2], 'timestamp': r[3], 'read_status': r[4]} for r in rows]
-        messages[room] = msgs
+        messages_dict[room_name] = msgs
         
-        c.execute('SELECT last_read FROM user_rooms WHERE username = ? AND room = ?', (username, room))
+        c.execute('SELECT last_read FROM user_rooms WHERE username = ? AND room = ?', (username, room_name))
         last_read_row = c.fetchone()
         last_read = last_read_row[0] if last_read_row else None
         
         if last_read:
-            unreadCount[room] = sum(1 for m in msgs if m['username'] != username and m['timestamp'] > last_read)
+            unreadCount[room_name] = sum(1 for m in msgs if m['username'] != username and m['timestamp'] > last_read)
         else:
-            unreadCount[room] = sum(1 for m in msgs if m['username'] != username)
+            unreadCount[room_name] = sum(1 for m in msgs if m['username'] != username)
     
     conn.close()
-    return {'success': True, 'rooms': [{'name': r} for r in rooms], 'unreadCount': unreadCount, 'messages': messages}
+    return {'success': True, 'rooms': rooms, 'unreadCount': unreadCount, 'messages': messages_dict}
 
 @socketio.on('register')
 def handle_register(username):
@@ -427,7 +451,7 @@ def handle_join(data):
 def handle_message(data):
     room = data['room']
     text = data['text']
-    username = request.sid  # будем передавать с клиента
+    username = request.sid
     
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
