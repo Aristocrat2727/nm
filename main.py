@@ -45,7 +45,7 @@ HTML = """
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
-    <title>Shadow Chat</title>
+    <title>Shadow Chat — время и галочки</title>
     <script src="https://cdn.socket.io/4.5.0/socket.io.min.js"></script>
     <style>
         *{margin:0;padding:0;box-sizing:border-box}
@@ -58,6 +58,7 @@ HTML = """
         .auth-panel input:focus{border-color:#6366f1}
         .buttons{display:flex;gap:12px;margin-top:8px}
         .buttons button{flex:1;background:#6366f1;border:none;border-radius:40px;padding:12px;color:white;font-weight:bold;cursor:pointer}
+        .buttons button:active{transform:scale(0.97)}
         .room-panel{display:flex;flex-direction:column;gap:8px;padding:12px;background:#0f0f14;border-bottom:1px solid #2d2f3e;display:none}
         .room-panel .row{display:flex;gap:8px}
         .room-panel input{flex:1;background:#1e1f2c;border:1px solid #2d2f3e;border-radius:40px;padding:10px 16px;color:white;outline:none}
@@ -93,13 +94,13 @@ HTML = """
     </div>
     <div class="room-panel" id="roomPanel">
         <div class="row">
-            <input type="text" id="roomCode" placeholder="Код комнаты">
-            <button id="joinBtn">Войти</button>
+            <input type="text" id="roomCode" placeholder="Код комнаты (например, superchat)">
+            <button id="joinBtn">Войти в комнату</button>
         </div>
     </div>
     <div class="messages" id="messages"></div>
     <div class="input-area" id="inputArea">
-        <input type="text" id="messageInput" placeholder="Сообщение..." autocomplete="off">
+        <input type="text" id="messageInput" placeholder="Напиши сообщение..." autocomplete="off">
         <button id="sendBtn">➤</button>
     </div>
     <div class="status" id="status">Введите логин и пароль</div>
@@ -124,12 +125,8 @@ HTML = """
     
     function formatTime(isoString) {
         if (!isoString) return '';
-        try {
-            const date = new Date(isoString);
-            return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-        } catch(e) {
-            return '';
-        }
+        const date = new Date(isoString);
+        return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
     }
     
     function addMessage(text, isMy, username = '', readStatus = 'sent', timestamp = null) {
@@ -146,7 +143,7 @@ HTML = """
         const bubble = document.createElement('div');
         bubble.className = 'bubble';
         
-        if (!isMy && username && username !== 'system') {
+        if (!isMy && username) {
             const nameSpan = document.createElement('div');
             nameSpan.className = 'username';
             nameSpan.innerText = escapeHtml(username);
@@ -178,8 +175,7 @@ HTML = """
     }
     
     function escapeHtml(str) {
-        if (!str) return '';
-        return String(str).replace(/[&<>]/g, function(m) {
+        return str.replace(/[&<>]/g, function(m) {
             if (m === '&') return '&amp;';
             if (m === '<') return '&lt;';
             if (m === '>') return '&gt;';
@@ -211,7 +207,7 @@ HTML = """
             currentUser = savedUsername;
             authPanel.style.display = 'none';
             roomPanel.style.display = 'flex';
-            statusSpan.innerText = `✅ С возвращением, ${currentUser}!`;
+            statusSpan.innerText = `✅ С возвращением, ${currentUser}! Введите код комнаты.`;
             return true;
         } else {
             localStorage.removeItem('shadow_token');
@@ -234,7 +230,7 @@ HTML = """
             localStorage.setItem('shadow_username', username);
             authPanel.style.display = 'none';
             roomPanel.style.display = 'flex';
-            statusSpan.innerText = `✅ Добро пожаловать, ${username}!`;
+            statusSpan.innerText = `✅ Добро пожаловать, ${username}! Введите код комнаты.`;
         } else {
             statusSpan.innerText = `❌ ${result.error}`;
         }
@@ -249,9 +245,7 @@ HTML = """
         }
         const result = await apiRequest('/register', { username, password });
         if (result.success) {
-            statusSpan.innerText = '✅ Регистрация успешна! Теперь войдите.';
-            document.getElementById('username').value = '';
-            document.getElementById('password').value = '';
+            statusSpan.innerText = `✅ Регистрация успешна! Теперь войдите.`;
         } else {
             statusSpan.innerText = `❌ ${result.error}`;
         }
@@ -260,12 +254,17 @@ HTML = """
     function connectToRoom(room) {
         if (socket) socket.disconnect();
         
-        socket = io();
+        socket = io({
+            reconnection: true,
+            reconnectionAttempts: Infinity,
+            reconnectionDelay: 1000,
+            reconnectionDelayMax: 5000
+        });
         
         socket.on('connect', () => {
             socket.emit('join', { room, username: currentUser });
             currentRoom = room;
-            statusSpan.innerText = `✅ Комната: ${room}`;
+            statusSpan.innerText = `✅ Комната: ${room}. Пишите сообщения.`;
             inputArea.style.display = 'flex';
             messageInput.focus();
         });
@@ -295,8 +294,11 @@ HTML = """
         });
         
         socket.on('disconnect', () => {
-            statusSpan.innerText = '⚠️ Потеря соединения';
-            inputArea.style.display = 'none';
+            statusSpan.innerText = '🔄 Потеряно соединение, переподключаюсь...';
+        });
+        
+        socket.on('connect_error', () => {
+            statusSpan.innerText = '⚠️ Ошибка соединения, попытка reconnect...';
         });
     }
     
@@ -418,6 +420,7 @@ def handle_join(data):
     history = [{'username': r[0], 'text': r[1], 'timestamp': r[2].isoformat() if hasattr(r[2], 'isoformat') else r[2], 'read_status': r[3]} for r in rows]
     conn.close()
     
+    # Обновляем статус прочтения для сообщений других пользователей
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
     c.execute('UPDATE messages SET read_status = "read" WHERE room = ? AND username != ? AND read_status = "sent"', (room, username))
@@ -426,7 +429,7 @@ def handle_join(data):
     
     emit('history', history)
     emit('read_receipt', {'room': room}, to=room)
-    emit('new_message', {'username': 'system', 'text': f'{username} присоединился', 'read_status': 'read', 'timestamp': datetime.now().isoformat()}, to=room)
+    emit('new_message', {'username': 'system', 'text': f'{username} присоединился к чату', 'read_status': 'read', 'timestamp': datetime.now().isoformat()}, to=room)
 
 @socketio.on('message')
 def handle_message(data):
@@ -460,7 +463,5 @@ def handle_mark_read(data):
     emit('read_receipt', {'room': room}, to=room)
 
 if __name__ == '__main__':
-    os.makedirs('/app/data', exist_ok=True)
     init_db()
-    port = int(os.environ.get('PORT', 8080))
-    socketio.run(app, host='0.0.0.0', port=port)
+    socketio.run(app, host='0.0.0.0', port=int(os.environ.get('PORT', 8080)))
