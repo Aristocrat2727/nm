@@ -44,7 +44,7 @@ HTML = """
 <html lang="ru">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
     <title>Shadow Chat</title>
     <script src="https://cdn.socket.io/4.5.0/socket.io.min.js"></script>
     <style>
@@ -54,13 +54,13 @@ HTML = """
         .header{background:#1e1f2c;padding:16px;border-bottom:1px solid #2d2f3e;text-align:center}
         .header h1{color:#f1f5f9;font-size:1.3rem}
         .auth-panel{display:flex;flex-direction:column;gap:12px;padding:20px;background:#0f0f14;border-bottom:1px solid #2d2f3e}
-        .auth-panel input{background:#1e1f2c;border:1px solid #2d2f3e;border-radius:40px;padding:12px 16px;color:white;outline:none;width:100%}
+        .auth-panel input{background:#1e1f2c;border:1px solid #2d2f3e;border-radius:40px;padding:12px 16px;color:white;outline:none;width:100%;font-size:16px}
         .auth-panel input:focus{border-color:#6366f1}
         .buttons{display:flex;gap:12px;margin-top:8px}
         .buttons button{flex:1;background:#6366f1;border:none;border-radius:40px;padding:12px;color:white;font-weight:bold;cursor:pointer}
         .room-panel{display:flex;flex-direction:column;gap:8px;padding:12px;background:#0f0f14;border-bottom:1px solid #2d2f3e;display:none}
         .room-panel .row{display:flex;gap:8px}
-        .room-panel input{flex:1;background:#1e1f2c;border:1px solid #2d2f3e;border-radius:40px;padding:10px 16px;color:white;outline:none}
+        .room-panel input{flex:1;background:#1e1f2c;border:1px solid #2d2f3e;border-radius:40px;padding:10px 16px;color:white;outline:none;font-size:16px}
         .room-panel button{background:#6366f1;border:none;border-radius:40px;padding:0 20px;color:white;font-weight:bold;cursor:pointer}
         .messages{flex:1;overflow-y:auto;padding:16px;display:flex;flex-direction:column;gap:12px}
         .message{display:flex;gap:10px;width:100%}
@@ -76,9 +76,16 @@ HTML = """
         .message-info{font-size:10px;color:#7c8ba0;margin-top:4px;display:flex;gap:6px;justify-content:flex-end;white-space:nowrap}
         .username{font-weight:bold;margin-bottom:4px;font-size:12px}
         .input-area{display:flex;gap:8px;padding:16px;border-top:1px solid #2d2f3e;background:#0f0f14;display:none}
+        .input-wrapper{flex:1;display:flex;gap:8px}
         .input-area input{flex:1;background:#1e1f2c;border:1px solid #2d2f3e;border-radius:40px;padding:12px;color:white;outline:none;font-size:16px}
-        .input-area button{background:#6366f1;border:none;border-radius:40px;padding:0 20px;color:white;font-weight:bold;cursor:pointer}
+        .input-area input:focus{border-color:#6366f1}
+        .input-area button{background:#6366f1;border:none;border-radius:40px;padding:0 20px;color:white;font-weight:bold;cursor:pointer;font-size:16px}
+        .done-btn{background:#2d2f3e;border:none;border-radius:40px;padding:0 16px;color:#7c8ba0;font-weight:bold;cursor:pointer;font-size:14px}
         .status{font-size:12px;color:#7c8ba0;text-align:center;padding:8px}
+        @media (max-width: 600px) {
+            .input-area button{padding:0 16px}
+            .done-btn{padding:0 12px}
+        }
     </style>
 </head>
 <body>
@@ -102,8 +109,11 @@ HTML = """
     </div>
     <div class="messages" id="messages"></div>
     <div class="input-area" id="inputArea">
-        <input type="text" id="messageInput" placeholder="Сообщение...">
-        <button id="sendBtn">➤</button>
+        <div class="input-wrapper">
+            <input type="text" id="messageInput" placeholder="Сообщение...">
+            <button id="sendBtn">➤</button>
+        </div>
+        <button class="done-btn" id="doneBtn">Готово</button>
     </div>
     <div class="status" id="status">Введите логин и пароль</div>
 </div>
@@ -121,9 +131,23 @@ HTML = """
     const joinBtn = document.getElementById('joinBtn');
     const messageInput = document.getElementById('messageInput');
     const sendBtn = document.getElementById('sendBtn');
+    const doneBtn = document.getElementById('doneBtn');
     
     const savedToken = localStorage.getItem('shadow_token');
     const savedUsername = localStorage.getItem('shadow_username');
+    
+    // Скрыть клавиатуру
+    function hideKeyboard() {
+        messageInput.blur();
+        document.activeElement.blur();
+        if (document.activeElement && document.activeElement.blur) {
+            document.activeElement.blur();
+        }
+    }
+    
+    doneBtn.onclick = () => {
+        hideKeyboard();
+    };
     
     function formatTime(isoString) {
         if (!isoString) return '';
@@ -341,7 +365,10 @@ HTML = """
     };
     
     messageInput.addEventListener('keypress', (e) => {
-        if (e.key === 'Enter') sendBtn.click();
+        if (e.key === 'Enter') {
+            e.preventDefault();
+            sendBtn.click();
+        }
     });
     
     autoLogin();
