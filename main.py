@@ -70,13 +70,13 @@ HTML = """
         .system-message .avatar{display:none}
         .avatar{width:32px;height:32px;border-radius:50%;background:#2d2f3e;display:flex;align-items:center;justify-content:center;font-size:12px;color:#e2e8f0;flex-shrink:0}
         .my-message .avatar{display:none}
-        .bubble{max-width:70%;padding:10px 14px;border-radius:20px;font-size:14px;line-height:1.4;word-break:break-word}
+        .bubble{max-width:70%;padding:10px 14px;border-radius:20px;font-size:14px;line-height:1.4;word-break:break-word;white-space:pre-wrap;word-wrap:break-word;overflow-wrap:break-word}
         .my-message .bubble{background:#6366f1;color:white}
         .other-message .bubble{background:#2d2f3e;color:#e2e8f0}
-        .message-info{font-size:10px;color:#7c8ba0;margin-top:4px;display:flex;gap:6px;justify-content:flex-end}
+        .message-info{font-size:10px;color:#7c8ba0;margin-top:4px;display:flex;gap:6px;justify-content:flex-end;white-space:nowrap}
         .username{font-weight:bold;margin-bottom:4px;font-size:12px}
         .input-area{display:flex;gap:8px;padding:16px;border-top:1px solid #2d2f3e;background:#0f0f14;display:none}
-        .input-area input{flex:1;background:#1e1f2c;border:1px solid #2d2f3e;border-radius:40px;padding:12px;color:white;outline:none}
+        .input-area input{flex:1;background:#1e1f2c;border:1px solid #2d2f3e;border-radius:40px;padding:12px;color:white;outline:none;font-size:16px}
         .input-area button{background:#6366f1;border:none;border-radius:40px;padding:0 20px;color:white;font-weight:bold;cursor:pointer}
         .status{font-size:12px;color:#7c8ba0;text-align:center;padding:8px}
     </style>
@@ -451,7 +451,6 @@ def handle_join(data):
     
     emit('history', history)
     emit('read_receipt', {'room': room}, to=room)
-    # Системное сообщение как Shadow
     emit('new_message', {'username': 'system', 'text': f'🔮 {username} присоединился к чату', 'read_status': 'read', 'timestamp': datetime.now().isoformat()}, to=room)
 
 @socketio.on('message')
