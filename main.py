@@ -154,7 +154,7 @@ HTML = """
         const bubble = document.createElement('div');
         bubble.className = 'bubble';
         
-        if (!isMy) {
+        if (!isMy && username && username !== 'system') {
             const nameSpan = document.createElement('div');
             nameSpan.className = 'username';
             nameSpan.innerText = escapeHtml(username);
@@ -162,7 +162,7 @@ HTML = """
         }
         
         const textSpan = document.createElement('span');
-        textSpan.innerText = text;
+        textSpan.innerText = escapeHtml(text);
         bubble.appendChild(textSpan);
         
         const info = document.createElement('div');
@@ -211,7 +211,7 @@ HTML = """
         if (!savedToken) return false;
         const result = await apiRequest('/auto_login', { token: savedToken });
         if (result.success) {
-            currentUser = savedUsername;
+            currentUser = result.username;
             authPanel.style.display = 'none';
             roomPanel.style.display = 'flex';
             statusSpan.innerText = `✅ С возвращением, ${currentUser}! Введите код комнаты.`;
@@ -291,6 +291,15 @@ HTML = """
                     }
                 });
             }
+        });
+        
+        socket.on('disconnect', () => {
+            statusSpan.innerText = '⚠️ Потеря соединения. Переподключение...';
+        });
+        
+        socket.on('connect_error', (error) => {
+            console.error('Connection error:', error);
+            statusSpan.innerText = '❌ Ошибка подключения к серверу';
         });
     }
     
@@ -407,28 +416,42 @@ def handle_join(data):
     username = data['username']
     join_room(room)
     
+    # Отправляем историю
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
     c.execute('SELECT username, text, timestamp, read_status FROM messages WHERE room = ? ORDER BY timestamp', (room,))
     rows = c.fetchall()
     history = [{'username': r[0], 'text': r[1], 'timestamp': r[2], 'read_status': r[3]} for r in rows]
     conn.close()
+    emit('history', history)
     
+    # Обновляем статус прочтения для сообщений других пользователей
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
-    c.execute('UPDATE messages SET read_status = "read" WHERE room = ? AND username != ? AND read_status = "sent"', (room, username))
+    c.execute('UPDATE messages SET read_status = "read" WHERE room = ? AND username != ? AND read_status = "sent"', 
+              (room, username))
+    updated = c.rowcount
     conn.commit()
     conn.close()
-    emit('read_receipt', {'room': room, 'username': username}, to=room)
-    emit('history', history)
-    emit('new_message', {'username': 'system', 'text': f'{username} присоединился к чату', 'read_status': 'read', 'timestamp': datetime.now().isoformat()}, to=room, skip_sid=request.sid)
+    
+    # Отправляем уведомление о прочтении всем в комнате
+    if updated > 0:
+        emit('read_receipt', {'room': room}, to=room)
+    
+    # Отправляем системное сообщение о входе
+    emit('new_message', {
+        'username': 'system', 
+        'text': f'{username} присоединился к чату', 
+        'read_status': 'read', 
+        'timestamp': datetime.now().isoformat()
+    }, to=room)
 
 @socketio.on('message')
 def handle_message(data):
     room = data['room']
     text = data['text']
     username = data.get('username')
-    if not username:
+    if not username or not text:
         return
     
     timestamp = datetime.now().isoformat()
@@ -439,20 +462,35 @@ def handle_message(data):
     conn.commit()
     conn.close()
     
-    emit('new_message', {'username': username, 'text': text, 'read_status': 'sent', 'timestamp': timestamp}, to=room)
+    emit('new_message', {
+        'username': username, 
+        'text': text, 
+        'read_status': 'sent', 
+        'timestamp': timestamp
+    }, to=room)
 
 @socketio.on('mark_read')
 def handle_mark_read(data):
     room = data['room']
-    username = data.get('username') or request.sid
+    # Получаем username из данных или используем request.sid как fallback
+    username = data.get('username')
+    if not username:
+        return
+    
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
-    c.execute('UPDATE messages SET read_status = "read" WHERE room = ? AND username != ? AND read_status = "sent"', (room, username))
+    c.execute('UPDATE messages SET read_status = "read" WHERE room = ? AND username != ? AND read_status = "sent"', 
+              (room, username))
+    updated = c.rowcount
     conn.commit()
     conn.close()
-    emit('read_receipt', {'room': room, 'username': username}, to=room)
+    
+    if updated > 0:
+        emit('read_receipt', {'room': room}, to=room)
 
 if __name__ == '__main__':
+    # Создаем директорию для БД если её нет
+    os.makedirs('/app/data', exist_ok=True)
     init_db()
     port = int(os.environ.get('PORT', 8080))
     socketio.run(app, host='0.0.0.0', port=port, allow_unsafe_werkzeug=True)
