@@ -65,6 +65,9 @@ HTML = """
         .messages{flex:1;overflow-y:auto;padding:16px;display:flex;flex-direction:column;gap:12px}
         .message{display:flex;gap:10px;width:100%}
         .my-message{justify-content:flex-end}
+        .system-message{justify-content:center}
+        .system-message .bubble{background:#2d2f3e;color:#7c8ba0;font-style:italic;font-size:12px;text-align:center;max-width:90%}
+        .system-message .avatar{display:none}
         .avatar{width:32px;height:32px;border-radius:50%;background:#2d2f3e;display:flex;align-items:center;justify-content:center;font-size:12px;color:#e2e8f0;flex-shrink:0}
         .my-message .avatar{display:none}
         .bubble{max-width:70%;padding:10px 14px;border-radius:20px;font-size:14px;line-height:1.4;word-break:break-word}
@@ -132,47 +135,57 @@ HTML = """
         }
     }
     
-    function addMessage(text, isMy, username = '', readStatus = 'sent', timestamp = null) {
+    function addMessage(text, isMy, username = '', readStatus = 'sent', timestamp = null, isSystem = false) {
         const div = document.createElement('div');
-        div.className = `message ${isMy ? 'my-message' : 'other-message'}`;
         
-        const avatar = document.createElement('div');
-        avatar.className = 'avatar';
-        avatar.innerText = isMy ? '' : (username.charAt(0) || '?');
-        
-        const bubbleWrapper = document.createElement('div');
-        bubbleWrapper.style.maxWidth = '70%';
-        
-        const bubble = document.createElement('div');
-        bubble.className = 'bubble';
-        
-        if (!isMy && username && username !== 'system') {
-            const nameSpan = document.createElement('div');
-            nameSpan.className = 'username';
-            nameSpan.innerText = escapeHtml(username);
-            bubble.appendChild(nameSpan);
+        if (isSystem) {
+            div.className = 'message system-message';
+            const bubble = document.createElement('div');
+            bubble.className = 'bubble';
+            bubble.innerText = text;
+            div.appendChild(bubble);
+        } else {
+            div.className = `message ${isMy ? 'my-message' : 'other-message'}`;
+            
+            const avatar = document.createElement('div');
+            avatar.className = 'avatar';
+            avatar.innerText = isMy ? '' : (username.charAt(0) || '?');
+            
+            const bubbleWrapper = document.createElement('div');
+            bubbleWrapper.style.maxWidth = '70%';
+            
+            const bubble = document.createElement('div');
+            bubble.className = 'bubble';
+            
+            if (!isMy && username) {
+                const nameSpan = document.createElement('div');
+                nameSpan.className = 'username';
+                nameSpan.innerText = escapeHtml(username);
+                bubble.appendChild(nameSpan);
+            }
+            
+            const textSpan = document.createElement('span');
+            textSpan.innerText = text;
+            bubble.appendChild(textSpan);
+            
+            const info = document.createElement('div');
+            info.className = 'message-info';
+            const timeSpan = document.createElement('span');
+            timeSpan.innerText = formatTime(timestamp);
+            info.appendChild(timeSpan);
+            
+            if (isMy) {
+                const statusSpanEl = document.createElement('span');
+                statusSpanEl.innerText = readStatus === 'read' ? '✓✓' : '✓';
+                info.appendChild(statusSpanEl);
+            }
+            
+            bubble.appendChild(info);
+            bubbleWrapper.appendChild(bubble);
+            div.appendChild(avatar);
+            div.appendChild(bubbleWrapper);
         }
         
-        const textSpan = document.createElement('span');
-        textSpan.innerText = text;
-        bubble.appendChild(textSpan);
-        
-        const info = document.createElement('div');
-        info.className = 'message-info';
-        const timeSpan = document.createElement('span');
-        timeSpan.innerText = formatTime(timestamp);
-        info.appendChild(timeSpan);
-        
-        if (isMy) {
-            const statusSpanEl = document.createElement('span');
-            statusSpanEl.innerText = readStatus === 'read' ? '✓✓' : '✓';
-            info.appendChild(statusSpanEl);
-        }
-        
-        bubble.appendChild(info);
-        bubbleWrapper.appendChild(bubble);
-        div.appendChild(avatar);
-        div.appendChild(bubbleWrapper);
         messagesDiv.appendChild(div);
         messagesDiv.scrollTop = messagesDiv.scrollHeight;
     }
@@ -190,8 +203,12 @@ HTML = """
     function loadHistory(history) {
         messagesDiv.innerHTML = '';
         for (let msg of history) {
-            const isMy = (msg.username === currentUser);
-            addMessage(msg.text, isMy, msg.username, msg.read_status, msg.timestamp);
+            if (msg.username === 'system') {
+                addMessage(msg.text, false, '', 'read', msg.timestamp, true);
+            } else {
+                const isMy = (msg.username === currentUser);
+                addMessage(msg.text, isMy, msg.username, msg.read_status, msg.timestamp, false);
+            }
         }
     }
     
@@ -217,8 +234,11 @@ HTML = """
             roomPanel.style.display = 'flex';
             statusSpan.innerText = '✅ Введите код комнаты';
             return true;
+        } else {
+            localStorage.removeItem('shadow_token');
+            localStorage.removeItem('shadow_username');
+            return false;
         }
-        return false;
     }
     
     document.getElementById('loginBtn').onclick = async () => {
@@ -251,6 +271,8 @@ HTML = """
         const result = await apiRequest('/register', { username, password });
         if (result.success) {
             statusSpan.innerText = '✅ Регистрация успешна! Теперь войдите.';
+            document.getElementById('username').value = '';
+            document.getElementById('password').value = '';
         } else {
             statusSpan.innerText = `❌ ${result.error}`;
         }
@@ -274,11 +296,15 @@ HTML = """
         });
         
         socket.on('new_message', (data) => {
-            const isMy = (data.username === currentUser);
-            addMessage(data.text, isMy, data.username, data.read_status, data.timestamp);
-            
-            if (!isMy && currentRoom === data.room && data.username !== 'system') {
-                socket.emit('mark_read', { room: data.room });
+            if (data.username === 'system') {
+                addMessage(data.text, false, '', 'read', data.timestamp, true);
+            } else {
+                const isMy = (data.username === currentUser);
+                addMessage(data.text, isMy, data.username, data.read_status, data.timestamp, false);
+                
+                if (!isMy && currentRoom === data.room) {
+                    socket.emit('mark_read', { room: data.room });
+                }
             }
         });
         
@@ -425,7 +451,8 @@ def handle_join(data):
     
     emit('history', history)
     emit('read_receipt', {'room': room}, to=room)
-    emit('new_message', {'username': 'system', 'text': f'{username} присоединился', 'read_status': 'read', 'timestamp': datetime.now().isoformat()}, to=room)
+    # Системное сообщение как Shadow
+    emit('new_message', {'username': 'system', 'text': f'🔮 {username} присоединился к чату', 'read_status': 'read', 'timestamp': datetime.now().isoformat()}, to=room)
 
 @socketio.on('message')
 def handle_message(data):
