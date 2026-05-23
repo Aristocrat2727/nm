@@ -8,9 +8,9 @@ import secrets
 
 app = Flask(__name__)
 app.config['SECRET_KEY'] = 'supersecretkey'
-socketio = SocketIO(app, cors_allowed_origins="*", ping_timeout=60, ping_interval=25)
+socketio = SocketIO(app, cors_allowed_origins="*")
 
-DB_PATH = '/app/data/shadow_chat.db'
+DB_PATH = 'shadow_chat.db'
 
 def init_db():
     conn = sqlite3.connect(DB_PATH)
@@ -44,8 +44,8 @@ HTML = """
 <html lang="ru">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
-    <title>Shadow Chat — время и галочки</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Shadow Chat</title>
     <script src="https://cdn.socket.io/4.5.0/socket.io.min.js"></script>
     <style>
         *{margin:0;padding:0;box-sizing:border-box}
@@ -58,7 +58,6 @@ HTML = """
         .auth-panel input:focus{border-color:#6366f1}
         .buttons{display:flex;gap:12px;margin-top:8px}
         .buttons button{flex:1;background:#6366f1;border:none;border-radius:40px;padding:12px;color:white;font-weight:bold;cursor:pointer}
-        .buttons button:active{transform:scale(0.97)}
         .room-panel{display:flex;flex-direction:column;gap:8px;padding:12px;background:#0f0f14;border-bottom:1px solid #2d2f3e;display:none}
         .room-panel .row{display:flex;gap:8px}
         .room-panel input{flex:1;background:#1e1f2c;border:1px solid #2d2f3e;border-radius:40px;padding:10px 16px;color:white;outline:none}
@@ -89,18 +88,18 @@ HTML = """
         <input type="password" id="password" placeholder="Пароль">
         <div class="buttons">
             <button id="loginBtn">Войти</button>
-            <button id="registerBtn">Зарегистрироваться</button>
+            <button id="registerBtn">Регистрация</button>
         </div>
     </div>
     <div class="room-panel" id="roomPanel">
         <div class="row">
-            <input type="text" id="roomCode" placeholder="Код комнаты (например, superchat)">
-            <button id="joinBtn">Войти в комнату</button>
+            <input type="text" id="roomCode" placeholder="Код комнаты">
+            <button id="joinBtn">Войти</button>
         </div>
     </div>
     <div class="messages" id="messages"></div>
     <div class="input-area" id="inputArea">
-        <input type="text" id="messageInput" placeholder="Напиши сообщение..." autocomplete="off">
+        <input type="text" id="messageInput" placeholder="Сообщение...">
         <button id="sendBtn">➤</button>
     </div>
     <div class="status" id="status">Введите логин и пароль</div>
@@ -125,8 +124,12 @@ HTML = """
     
     function formatTime(isoString) {
         if (!isoString) return '';
-        const date = new Date(isoString);
-        return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+        try {
+            const date = new Date(isoString);
+            return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+        } catch(e) {
+            return '';
+        }
     }
     
     function addMessage(text, isMy, username = '', readStatus = 'sent', timestamp = null) {
@@ -143,7 +146,7 @@ HTML = """
         const bubble = document.createElement('div');
         bubble.className = 'bubble';
         
-        if (!isMy && username) {
+        if (!isMy && username && username !== 'system') {
             const nameSpan = document.createElement('div');
             nameSpan.className = 'username';
             nameSpan.innerText = escapeHtml(username);
@@ -175,7 +178,8 @@ HTML = """
     }
     
     function escapeHtml(str) {
-        return str.replace(/[&<>]/g, function(m) {
+        if (!str) return '';
+        return String(str).replace(/[&<>]/g, function(m) {
             if (m === '&') return '&amp;';
             if (m === '<') return '&lt;';
             if (m === '>') return '&gt;';
@@ -192,12 +196,16 @@ HTML = """
     }
     
     async function apiRequest(endpoint, data) {
-        const res = await fetch(endpoint, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(data)
-        });
-        return res.json();
+        try {
+            const res = await fetch(endpoint, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(data)
+            });
+            return await res.json();
+        } catch(e) {
+            return { success: false, error: 'Ошибка' };
+        }
     }
     
     async function autoLogin() {
@@ -207,13 +215,10 @@ HTML = """
             currentUser = savedUsername;
             authPanel.style.display = 'none';
             roomPanel.style.display = 'flex';
-            statusSpan.innerText = `✅ С возвращением, ${currentUser}! Введите код комнаты.`;
+            statusSpan.innerText = '✅ Введите код комнаты';
             return true;
-        } else {
-            localStorage.removeItem('shadow_token');
-            localStorage.removeItem('shadow_username');
-            return false;
         }
+        return false;
     }
     
     document.getElementById('loginBtn').onclick = async () => {
@@ -230,7 +235,7 @@ HTML = """
             localStorage.setItem('shadow_username', username);
             authPanel.style.display = 'none';
             roomPanel.style.display = 'flex';
-            statusSpan.innerText = `✅ Добро пожаловать, ${username}! Введите код комнаты.`;
+            statusSpan.innerText = '✅ Введите код комнаты';
         } else {
             statusSpan.innerText = `❌ ${result.error}`;
         }
@@ -245,26 +250,21 @@ HTML = """
         }
         const result = await apiRequest('/register', { username, password });
         if (result.success) {
-            statusSpan.innerText = `✅ Регистрация успешна! Теперь войдите.`;
+            statusSpan.innerText = '✅ Регистрация успешна! Теперь войдите.';
         } else {
             statusSpan.innerText = `❌ ${result.error}`;
         }
     };
     
     function connectToRoom(room) {
-        if (socket) socket.disconnect();
+        if (socket) socket.close();
         
-        socket = io({
-            reconnection: true,
-            reconnectionAttempts: Infinity,
-            reconnectionDelay: 1000,
-            reconnectionDelayMax: 5000
-        });
+        socket = io();
         
         socket.on('connect', () => {
             socket.emit('join', { room, username: currentUser });
             currentRoom = room;
-            statusSpan.innerText = `✅ Комната: ${room}. Пишите сообщения.`;
+            statusSpan.innerText = `✅ Комната: ${room}`;
             inputArea.style.display = 'flex';
             messageInput.focus();
         });
@@ -285,20 +285,14 @@ HTML = """
         socket.on('read_receipt', ({ room }) => {
             if (room === currentRoom) {
                 document.querySelectorAll('.my-message .message-info').forEach(info => {
-                    const statusSpanEl = info.querySelector('span:last-child');
-                    if (statusSpanEl && statusSpanEl.innerText === '✓') {
-                        statusSpanEl.innerText = '✓✓';
-                    }
+                    const s = info.querySelector('span:last-child');
+                    if (s && s.innerText === '✓') s.innerText = '✓✓';
                 });
             }
         });
         
         socket.on('disconnect', () => {
-            statusSpan.innerText = '🔄 Потеряно соединение, переподключаюсь...';
-        });
-        
-        socket.on('connect_error', () => {
-            statusSpan.innerText = '⚠️ Ошибка соединения, попытка reconnect...';
+            statusSpan.innerText = '⚠️ Потеря соединения';
         });
     }
     
@@ -374,7 +368,7 @@ def login():
         return {'success': False, 'error': 'Неверный логин или пароль'}
     
     token = secrets.token_urlsafe(32)
-    expires_at = datetime.now() + timedelta(days=365*10)
+    expires_at = datetime.now() + timedelta(days=365)
     
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
@@ -417,10 +411,12 @@ def handle_join(data):
     c = conn.cursor()
     c.execute('SELECT username, text, timestamp, read_status FROM messages WHERE room = ? ORDER BY timestamp', (room,))
     rows = c.fetchall()
-    history = [{'username': r[0], 'text': r[1], 'timestamp': r[2].isoformat() if hasattr(r[2], 'isoformat') else r[2], 'read_status': r[3]} for r in rows]
+    history = []
+    for r in rows:
+        ts = r[2].isoformat() if hasattr(r[2], 'isoformat') else str(r[2])
+        history.append({'username': r[0], 'text': r[1], 'timestamp': ts, 'read_status': r[3]})
     conn.close()
     
-    # Обновляем статус прочтения для сообщений других пользователей
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
     c.execute('UPDATE messages SET read_status = "read" WHERE room = ? AND username != ? AND read_status = "sent"', (room, username))
@@ -429,7 +425,7 @@ def handle_join(data):
     
     emit('history', history)
     emit('read_receipt', {'room': room}, to=room)
-    emit('new_message', {'username': 'system', 'text': f'{username} присоединился к чату', 'read_status': 'read', 'timestamp': datetime.now().isoformat()}, to=room)
+    emit('new_message', {'username': 'system', 'text': f'{username} присоединился', 'read_status': 'read', 'timestamp': datetime.now().isoformat()}, to=room)
 
 @socketio.on('message')
 def handle_message(data):
@@ -464,4 +460,5 @@ def handle_mark_read(data):
 
 if __name__ == '__main__':
     init_db()
-    socketio.run(app, host='0.0.0.0', port=int(os.environ.get('PORT', 8080)))
+    port = int(os.environ.get('PORT', 8080))
+    socketio.run(app, host='0.0.0.0', port=port)
