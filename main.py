@@ -8,7 +8,7 @@ import secrets
 
 app = Flask(__name__)
 app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', secrets.token_urlsafe(32))
-socketio = SocketIO(app, cors_allowed_origins="*", ping_timeout=60, ping_interval=25, async_mode='eventlet')
+socketio = SocketIO(app, cors_allowed_origins="*", ping_timeout=60, ping_interval=25)
 
 DB_PATH = '/app/data/shadow_chat.db'
 
@@ -772,6 +772,95 @@ def auto_login():
     
     return {'success': True, 'username': username}
 
+@socketio.on('join')
+def handle_join(data):
+    room = data['room']
+    username = data['username']
+    join_room(room)
+    
+    # Отправляем историю сообщений
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute('SELECT username, text, timestamp, read_status FROM messages WHERE room = ? ORDER BY timestamp ASC', (room,))
+    rows = c.fetchall()
+    history = [{'username': r[0], 'text': r[1], 'timestamp': r[2], 'read_status': r[3]} for r in rows]
+    conn.close()
+    emit('history', history)
+    
+    # Обновляем статус прочтения
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute('UPDATE messages SET read_status = "read" WHERE room = ? AND username != ? AND read_status = "sent"', 
+              (room, username))
+    updated = c.rowcount
+    conn.commit()
+    conn.close()
+    
+    if updated > 0:
+        emit('read_receipt', {'room': room}, to=room)
+    
+    # Отправляем системное сообщение
+    emit('new_message', {
+        'username': 'system',
+        'text': f'{username} присоединился к чату',
+        'read_status': 'read',
+        'timestamp': datetime.now().isoformat()
+    }, to=room)
+
+@socketio.on('message')
+def handle_message(data):
+    room = data['room']
+    text = data['text'].strip()
+    username = data.get('username')
+    
+    if not username or not text:
+        return
+    
+    if len(text) > 500:
+        return
+    
+    timestamp = datetime.now().isoformat()
+    
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute('INSERT INTO messages (room, username, text, timestamp, read_status) VALUES (?, ?, ?, ?, ?)',
+              (room, username, text, timestamp, 'sent'))
+    conn.commit()
+    conn.close()
+    
+    emit('new_message', {
+        'username': username,
+        'text': text,
+        'read_status': 'sent',
+        'timestamp': timestamp
+    }, to=room)
+
+@socketio.on('mark_read')
+def handle_mark_read(data):
+    room = data['room']
+    username = data.get('username')
+    
+    if not username:
+        return
+    
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute('UPDATE messages SET read_status = "read" WHERE room = ? AND username != ? AND read_status = "sent"', 
+              (room, username))
+    updated = c.rowcount
+    conn.commit()
+    conn.close()
+    
+    if updated > 0:
+        emit('read_receipt', {'room': room}, to=room)
+
+if __name__ == '__main__':
+    # Создаем директорию для БД
+    os.makedirs('/app/data', exist_ok=True)
+    init_db()
+    port = int(os.environ.get('PORT', 8080))
+    # Убираем allow_unsafe_werkzeug - он не нужен и вызывает ошибку
+    socketio.run(app, host='0.0.0.0', port=port, debug=False)
 @socketio.on('join')
 def handle_join(data):
     room = data['room']
