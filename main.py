@@ -5,8 +5,6 @@ from datetime import datetime, timedelta
 from flask import Flask, render_template_string, request
 from flask_socketio import SocketIO, emit, join_room
 from supabase import create_client
-import eventlet
-eventlet.monkey_patch()
 
 # ========== ТВОИ ДАННЫЕ ИЗ SUPABASE ==========
 SUPABASE_URL = "https://bjqgguylmkgvqxqblsni.supabase.co"
@@ -17,10 +15,7 @@ supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 app = Flask(__name__)
 app.config['SECRET_KEY'] = 'supersecretkey'
-socketio = SocketIO(app, cors_allowed_origins="*", async_mode='eventlet')
-
-def hash_password(password):
-    return hashlib.sha256(password.encode()).hexdigest()
+socketio = SocketIO(app, cors_allowed_origins="*", async_mode='threading')
 
 HTML = """
 <!DOCTYPE html>
