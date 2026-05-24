@@ -62,20 +62,20 @@ HTML = """
             display: flex;
             justify-content: center;
             align-items: center;
-            padding: 0;
-            margin: 0;
-            overflow: hidden;
-            position: fixed;
-            width: 100%;
+            padding: 12px;
         }
         
         .container {
             background: #1e1f2c;
+            border-radius: 32px;
             width: 100%;
-            height: 100%;
+            max-width: 600px;
+            height: auto;
+            max-height: 90vh;
             display: flex;
             flex-direction: column;
             overflow: hidden;
+            box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25);
         }
         
         .header {
@@ -134,6 +134,10 @@ HTML = """
             font-size: 16px;
         }
         
+        .buttons button:active {
+            transform: scale(0.97);
+        }
+        
         .room-panel {
             display: flex;
             flex-direction: column;
@@ -180,7 +184,8 @@ HTML = """
             flex-direction: column;
             gap: 8px;
             -webkit-overflow-scrolling: touch;
-            padding-bottom: env(safe-area-inset-bottom, 16px);
+            min-height: 300px;
+            max-height: 60vh;
         }
         
         .message {
@@ -200,21 +205,6 @@ HTML = """
         
         .other-message {
             justify-content: flex-start;
-        }
-        
-        .system-message {
-            justify-content: center;
-        }
-        
-        .system-message .bubble {
-            background: #2d2f3e;
-            color: #7c8ba0;
-            font-style: italic;
-            font-size: 11px;
-            text-align: center;
-            padding: 6px 12px;
-            border-radius: 16px;
-            max-width: 85%;
         }
         
         .avatar {
@@ -259,7 +249,7 @@ HTML = """
         }
         
         .message-info {
-            font-size: 9px;
+            font-size: 10px;
             color: #7c8ba0;
             margin-top: 4px;
             display: flex;
@@ -271,7 +261,7 @@ HTML = """
         .username {
             font-weight: bold;
             margin-bottom: 4px;
-            font-size: 11px;
+            font-size: 12px;
             color: #a5b4fc;
         }
         
@@ -279,13 +269,10 @@ HTML = """
             display: flex;
             gap: 8px;
             padding: 12px;
-            padding-bottom: max(12px, env(safe-area-inset-bottom));
             border-top: 1px solid #2d2f3e;
             background: #0f0f14;
             display: none;
             flex-shrink: 0;
-            position: relative;
-            z-index: 10;
         }
         
         .input-area input {
@@ -314,6 +301,10 @@ HTML = """
             font-size: 18px;
         }
         
+        .input-area button:active {
+            transform: scale(0.95);
+        }
+        
         .status {
             font-size: 11px;
             color: #7c8ba0;
@@ -336,9 +327,16 @@ HTML = """
             border-radius: 3px;
         }
         
-        /* При фокусе на инпуте скроллим к нему */
-        input:focus {
-            scroll-margin-bottom: 20px;
+        @media (max-width: 600px) {
+            body {
+                padding: 8px;
+            }
+            .container {
+                max-height: 95vh;
+            }
+            .messages {
+                max-height: 55vh;
+            }
         }
     </style>
 </head>
@@ -390,26 +388,17 @@ HTML = """
         if (!isoString) return '';
         try {
             const date = new Date(isoString);
-            // Локальное время устройства
             return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false });
         } catch(e) {
             return '';
         }
     }
     
-    function addMessage(text, isMy, username = '', readStatus = 'sent', timestamp = null, isSystem = false) {
+    function addMessage(text, isMy, username = '', readStatus = 'sent', timestamp = null) {
         const div = document.createElement('div');
         div.className = 'message';
         
-        if (isSystem) {
-            div.classList.add('system-message');
-            const bubble = document.createElement('div');
-            bubble.className = 'bubble';
-            // Убираем "присоединился к чату", оставляем только "вошел"
-            let systemText = text.replace('присоединился к чату', 'вошел');
-            bubble.innerText = systemText;
-            div.appendChild(bubble);
-        } else if (isMy) {
+        if (isMy) {
             div.classList.add('my-message');
             const bubble = document.createElement('div');
             bubble.className = 'bubble';
@@ -478,12 +467,8 @@ HTML = """
     function loadHistory(history) {
         messagesDiv.innerHTML = '';
         for (let msg of history) {
-            if (msg.username === 'system') {
-                addMessage(msg.text, false, '', 'read', msg.timestamp, true);
-            } else {
-                const isMy = (msg.username === currentUser);
-                addMessage(msg.text, isMy, msg.username, msg.read_status, msg.timestamp, false);
-            }
+            const isMy = (msg.username === currentUser);
+            addMessage(msg.text, isMy, msg.username, msg.read_status, msg.timestamp);
         }
     }
     
@@ -563,10 +548,6 @@ HTML = """
             currentRoom = room;
             statusSpan.innerText = `✅ Комната: ${room}`;
             inputArea.style.display = 'flex';
-            // Не фокусируемся автоматически на мобилках
-            if (!/Mobi|Android|iPhone|iPad|iPod/i.test(navigator.userAgent)) {
-                messageInput.focus();
-            }
         });
         
         socket.on('history', (history) => {
@@ -574,15 +555,11 @@ HTML = """
         });
         
         socket.on('new_message', (data) => {
-            if (data.username === 'system') {
-                addMessage(data.text, false, '', 'read', data.timestamp, true);
-            } else {
-                const isMy = (data.username === currentUser);
-                addMessage(data.text, isMy, data.username, data.read_status, data.timestamp, false);
-                
-                if (!isMy && currentRoom === data.room) {
-                    socket.emit('mark_read', { room: data.room });
-                }
+            const isMy = (data.username === currentUser);
+            addMessage(data.text, isMy, data.username, data.read_status, data.timestamp);
+            
+            if (!isMy && currentRoom === data.room) {
+                socket.emit('mark_read', { room: data.room });
             }
         });
         
@@ -614,8 +591,6 @@ HTML = """
         if (text && socket && currentRoom) {
             socket.emit('message', { room: currentRoom, text, username: currentUser });
             messageInput.value = '';
-            // Не убираем фокус, чтобы можно было писать несколько сообщений подряд
-            messageInput.focus();
         }
     };
     
@@ -624,13 +599,6 @@ HTML = """
             e.preventDefault();
             sendBtn.click();
         }
-    });
-    
-    // Скроллим к последнему сообщению при фокусе на инпуте (для мобилок)
-    messageInput.addEventListener('focus', () => {
-        setTimeout(() => {
-            messagesDiv.scrollTop = messagesDiv.scrollHeight;
-        }, 100);
     });
     
     autoLogin();
@@ -740,8 +708,6 @@ def handle_join(data):
     
     emit('history', history)
     emit('read_receipt', {'room': room}, to=room)
-    # Короткое системное сообщение
-    emit('new_message', {'username': 'system', 'text': f'🔮 {username} вошел', 'read_status': 'read', 'timestamp': datetime.now().isoformat()}, to=room)
 
 @socketio.on('message')
 def handle_message(data):
