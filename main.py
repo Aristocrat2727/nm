@@ -180,6 +180,7 @@ HTML = """
             flex-direction: column;
             gap: 8px;
             -webkit-overflow-scrolling: touch;
+            padding-bottom: env(safe-area-inset-bottom, 16px);
         }
         
         .message {
@@ -278,10 +279,13 @@ HTML = """
             display: flex;
             gap: 8px;
             padding: 12px;
+            padding-bottom: max(12px, env(safe-area-inset-bottom));
             border-top: 1px solid #2d2f3e;
             background: #0f0f14;
             display: none;
             flex-shrink: 0;
+            position: relative;
+            z-index: 10;
         }
         
         .input-area input {
@@ -319,7 +323,6 @@ HTML = """
             flex-shrink: 0;
         }
         
-        /* Убираем скроллбар на мобилках но оставляем функционал */
         .messages::-webkit-scrollbar {
             width: 3px;
         }
@@ -331,6 +334,11 @@ HTML = """
         .messages::-webkit-scrollbar-thumb {
             background: #6366f1;
             border-radius: 3px;
+        }
+        
+        /* При фокусе на инпуте скроллим к нему */
+        input:focus {
+            scroll-margin-bottom: 20px;
         }
     </style>
 </head>
@@ -382,7 +390,8 @@ HTML = """
         if (!isoString) return '';
         try {
             const date = new Date(isoString);
-            return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+            // Локальное время устройства
+            return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false });
         } catch(e) {
             return '';
         }
@@ -396,7 +405,9 @@ HTML = """
             div.classList.add('system-message');
             const bubble = document.createElement('div');
             bubble.className = 'bubble';
-            bubble.innerText = text;
+            // Убираем "присоединился к чату", оставляем только "вошел"
+            let systemText = text.replace('присоединился к чату', 'вошел');
+            bubble.innerText = systemText;
             div.appendChild(bubble);
         } else if (isMy) {
             div.classList.add('my-message');
@@ -552,7 +563,10 @@ HTML = """
             currentRoom = room;
             statusSpan.innerText = `✅ Комната: ${room}`;
             inputArea.style.display = 'flex';
-            messageInput.focus();
+            // Не фокусируемся автоматически на мобилках
+            if (!/Mobi|Android|iPhone|iPad|iPod/i.test(navigator.userAgent)) {
+                messageInput.focus();
+            }
         });
         
         socket.on('history', (history) => {
@@ -600,6 +614,7 @@ HTML = """
         if (text && socket && currentRoom) {
             socket.emit('message', { room: currentRoom, text, username: currentUser });
             messageInput.value = '';
+            // Не убираем фокус, чтобы можно было писать несколько сообщений подряд
             messageInput.focus();
         }
     };
@@ -609,6 +624,13 @@ HTML = """
             e.preventDefault();
             sendBtn.click();
         }
+    });
+    
+    // Скроллим к последнему сообщению при фокусе на инпуте (для мобилок)
+    messageInput.addEventListener('focus', () => {
+        setTimeout(() => {
+            messagesDiv.scrollTop = messagesDiv.scrollHeight;
+        }, 100);
     });
     
     autoLogin();
@@ -718,7 +740,8 @@ def handle_join(data):
     
     emit('history', history)
     emit('read_receipt', {'room': room}, to=room)
-    emit('new_message', {'username': 'system', 'text': f'🔮 {username} присоединился к чату', 'read_status': 'read', 'timestamp': datetime.now().isoformat()}, to=room)
+    # Короткое системное сообщение
+    emit('new_message', {'username': 'system', 'text': f'🔮 {username} вошел', 'read_status': 'read', 'timestamp': datetime.now().isoformat()}, to=room)
 
 @socketio.on('message')
 def handle_message(data):
