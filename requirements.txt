@@ -4,3 +4,4 @@ supabase
 simple-websocket
 python-engineio
 python-socketio
+eventlet
