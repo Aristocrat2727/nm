@@ -383,6 +383,7 @@ HTML = """
     
     const savedToken = localStorage.getItem('shadow_token');
     const savedUsername = localStorage.getItem('shadow_username');
+    const savedRoom = localStorage.getItem('shadow_room');
     
     function formatTime(isoString) {
         if (!isoString) return '';
@@ -486,17 +487,26 @@ HTML = """
     }
     
     async function autoLogin() {
-        if (!savedToken) return false;
+        if (!savedToken || !savedUsername) return false;
+        
         const result = await apiRequest('/auto_login', { token: savedToken });
         if (result.success) {
             currentUser = savedUsername;
             authPanel.style.display = 'none';
             roomPanel.style.display = 'flex';
             statusSpan.innerText = '✅ Введите код комнаты';
+            
+            if (savedRoom) {
+                roomCodeInput.value = savedRoom;
+                setTimeout(() => {
+                    connectToRoom(savedRoom);
+                }, 500);
+            }
             return true;
         } else {
             localStorage.removeItem('shadow_token');
             localStorage.removeItem('shadow_username');
+            localStorage.removeItem('shadow_room');
             return false;
         }
     }
@@ -540,6 +550,8 @@ HTML = """
     
     function connectToRoom(room) {
         if (socket) socket.close();
+        
+        localStorage.setItem('shadow_room', room);
         
         socket = io();
         
@@ -651,7 +663,7 @@ def login():
         return {'success': False, 'error': 'Неверный логин или пароль'}
     
     token = secrets.token_urlsafe(32)
-    expires_at = datetime.now() + timedelta(days=365)
+    expires_at = datetime.now() + timedelta(days=365*50)  # 50 лет
     
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
