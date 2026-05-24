@@ -1,40 +1,23 @@
-from flask import Flask, render_template_string, request
-from flask_socketio import SocketIO, emit, join_room
 import os
 import hashlib
-import sqlite3
-from datetime import datetime, timedelta
 import secrets
+from datetime import datetime, timedelta
+from flask import Flask, render_template_string, request
+from flask_socketio import SocketIO, emit, join_room
+from supabase import create_client
+import eventlet
+eventlet.monkey_patch()
+
+# ========== ТВОИ ДАННЫЕ ИЗ SUPABASE ==========
+SUPABASE_URL = "https://bjqgguylmkgvqxqblsni.supabase.co"
+SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImJqcWdndXlsbWtndnF4cWJsc25pIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzk2MjUzOTgsImV4cCI6MjA5NTIwMTM5OH0.-oFtd1CPQfGuXQK1AEiCkYWmGrb5IEvrfGUrpa6he2o"
+# ============================================
+
+supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 app = Flask(__name__)
 app.config['SECRET_KEY'] = 'supersecretkey'
-socketio = SocketIO(app, cors_allowed_origins="*")
-
-DB_PATH = 'shadow_chat.db'
-
-def init_db():
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
-    c.execute('''CREATE TABLE IF NOT EXISTS users (
-        username TEXT PRIMARY KEY,
-        password_hash TEXT NOT NULL,
-        created_at TIMESTAMP
-    )''')
-    c.execute('''CREATE TABLE IF NOT EXISTS messages (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        room TEXT NOT NULL,
-        username TEXT NOT NULL,
-        text TEXT NOT NULL,
-        timestamp TIMESTAMP,
-        read_status TEXT DEFAULT 'sent'
-    )''')
-    c.execute('''CREATE TABLE IF NOT EXISTS sessions (
-        token TEXT PRIMARY KEY,
-        username TEXT NOT NULL,
-        expires_at TIMESTAMP
-    )''')
-    conn.commit()
-    conn.close()
+socketio = SocketIO(app, cors_allowed_origins="*", async_mode='eventlet')
 
 def hash_password(password):
     return hashlib.sha256(password.encode()).hexdigest()
@@ -44,307 +27,63 @@ HTML = """
 <html lang="ru">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes, viewport-fit=cover">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Shadow Chat</title>
     <script src="https://cdn.socket.io/4.5.0/socket.io.min.js"></script>
     <style>
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-            -webkit-tap-highlight-color: transparent;
-        }
-        
+        * { margin: 0; padding: 0; box-sizing: border-box; }
         body {
             background: #0f0f14;
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+            font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
             height: 100vh;
             display: flex;
             justify-content: center;
             align-items: center;
             padding: 12px;
         }
-        
         .container {
             background: #1e1f2c;
             border-radius: 32px;
             width: 100%;
             max-width: 600px;
-            height: auto;
-            max-height: 90vh;
+            height: 90vh;
             display: flex;
             flex-direction: column;
             overflow: hidden;
-            box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25);
+            box-shadow: 0 25px 50px -12px rgba(0,0,0,0.25);
         }
-        
-        .header {
-            background: #1e1f2c;
-            padding: 16px;
-            border-bottom: 1px solid #2d2f3e;
-            text-align: center;
-            flex-shrink: 0;
-        }
-        
-        .header h1 {
-            color: #f1f5f9;
-            font-size: 1.3rem;
-        }
-        
-        .auth-panel {
-            display: flex;
-            flex-direction: column;
-            gap: 12px;
-            padding: 20px;
-            background: #0f0f14;
-            border-bottom: 1px solid #2d2f3e;
-            flex-shrink: 0;
-        }
-        
-        .auth-panel input {
-            background: #1e1f2c;
-            border: 1px solid #2d2f3e;
-            border-radius: 40px;
-            padding: 14px 16px;
-            color: white;
-            outline: none;
-            width: 100%;
-            font-size: 16px;
-        }
-        
-        .auth-panel input:focus {
-            border-color: #6366f1;
-        }
-        
-        .buttons {
-            display: flex;
-            gap: 12px;
-            margin-top: 8px;
-        }
-        
-        .buttons button {
-            flex: 1;
-            background: #6366f1;
-            border: none;
-            border-radius: 40px;
-            padding: 14px;
-            color: white;
-            font-weight: bold;
-            cursor: pointer;
-            font-size: 16px;
-        }
-        
-        .buttons button:active {
-            transform: scale(0.97);
-        }
-        
-        .room-panel {
-            display: flex;
-            flex-direction: column;
-            gap: 8px;
-            padding: 12px;
-            background: #0f0f14;
-            border-bottom: 1px solid #2d2f3e;
-            display: none;
-            flex-shrink: 0;
-        }
-        
-        .room-panel .row {
-            display: flex;
-            gap: 8px;
-        }
-        
-        .room-panel input {
-            flex: 1;
-            background: #1e1f2c;
-            border: 1px solid #2d2f3e;
-            border-radius: 40px;
-            padding: 12px 16px;
-            color: white;
-            outline: none;
-            font-size: 16px;
-        }
-        
-        .room-panel button {
-            background: #6366f1;
-            border: none;
-            border-radius: 40px;
-            padding: 0 24px;
-            color: white;
-            font-weight: bold;
-            cursor: pointer;
-            font-size: 16px;
-        }
-        
-        .messages {
-            flex: 1;
-            overflow-y: auto;
-            padding: 16px;
-            display: flex;
-            flex-direction: column;
-            gap: 8px;
-            -webkit-overflow-scrolling: touch;
-            min-height: 300px;
-            max-height: 60vh;
-        }
-        
-        .message {
-            display: flex;
-            width: 100%;
-            animation: fadeIn 0.2s ease;
-        }
-        
-        @keyframes fadeIn {
-            from { opacity: 0; transform: translateY(5px); }
-            to { opacity: 1; transform: translateY(0); }
-        }
-        
-        .my-message {
-            justify-content: flex-end;
-        }
-        
-        .other-message {
-            justify-content: flex-start;
-        }
-        
-        .avatar {
-            width: 32px;
-            height: 32px;
-            border-radius: 50%;
-            background: #2d2f3e;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-size: 12px;
-            color: #e2e8f0;
-            flex-shrink: 0;
-            margin-right: 8px;
-        }
-        
-        .my-message .avatar {
-            display: none;
-        }
-        
-        .bubble {
-            max-width: 75%;
-            padding: 8px 12px;
-            border-radius: 18px;
-            font-size: 15px;
-            line-height: 1.4;
-            word-wrap: break-word;
-            white-space: normal;
-            overflow-wrap: break-word;
-        }
-        
-        .my-message .bubble {
-            background: #6366f1;
-            color: white;
-            border-bottom-right-radius: 4px;
-        }
-        
-        .other-message .bubble {
-            background: #2d2f3e;
-            color: #e2e8f0;
-            border-bottom-left-radius: 4px;
-        }
-        
-        .message-info {
-            font-size: 10px;
-            color: #7c8ba0;
-            margin-top: 4px;
-            display: flex;
-            gap: 4px;
-            justify-content: flex-end;
-            align-items: center;
-        }
-        
-        .username {
-            font-weight: bold;
-            margin-bottom: 4px;
-            font-size: 12px;
-            color: #a5b4fc;
-        }
-        
-        .input-area {
-            display: flex;
-            gap: 8px;
-            padding: 12px;
-            border-top: 1px solid #2d2f3e;
-            background: #0f0f14;
-            display: none;
-            flex-shrink: 0;
-        }
-        
-        .input-area input {
-            flex: 1;
-            background: #1e1f2c;
-            border: 1px solid #2d2f3e;
-            border-radius: 40px;
-            padding: 14px;
-            color: white;
-            outline: none;
-            font-size: 16px;
-        }
-        
-        .input-area input:focus {
-            border-color: #6366f1;
-        }
-        
-        .input-area button {
-            background: #6366f1;
-            border: none;
-            border-radius: 40px;
-            padding: 0 24px;
-            color: white;
-            font-weight: bold;
-            cursor: pointer;
-            font-size: 18px;
-        }
-        
-        .input-area button:active {
-            transform: scale(0.95);
-        }
-        
-        .status {
-            font-size: 11px;
-            color: #7c8ba0;
-            text-align: center;
-            padding: 8px;
-            background: #0f0f14;
-            flex-shrink: 0;
-        }
-        
-        .messages::-webkit-scrollbar {
-            width: 3px;
-        }
-        
-        .messages::-webkit-scrollbar-track {
-            background: #2d2f3e;
-        }
-        
-        .messages::-webkit-scrollbar-thumb {
-            background: #6366f1;
-            border-radius: 3px;
-        }
-        
-        @media (max-width: 600px) {
-            body {
-                padding: 8px;
-            }
-            .container {
-                max-height: 95vh;
-            }
-            .messages {
-                max-height: 55vh;
-            }
-        }
+        .header { background: #1e1f2c; padding: 16px; border-bottom: 1px solid #2d2f3e; text-align: center; }
+        .header h1 { color: #f1f5f9; font-size: 1.3rem; }
+        .auth-panel { display: flex; flex-direction: column; gap: 12px; padding: 20px; background: #0f0f14; border-bottom: 1px solid #2d2f3e; }
+        .auth-panel input { background: #1e1f2c; border: 1px solid #2d2f3e; border-radius: 40px; padding: 14px 16px; color: white; outline: none; width: 100%; font-size: 16px; }
+        .buttons { display: flex; gap: 12px; margin-top: 8px; }
+        .buttons button { flex: 1; background: #6366f1; border: none; border-radius: 40px; padding: 14px; color: white; font-weight: bold; cursor: pointer; font-size: 16px; }
+        .room-panel { display: none; flex-direction: column; gap: 8px; padding: 12px; background: #0f0f14; border-bottom: 1px solid #2d2f3e; }
+        .room-panel .row { display: flex; gap: 8px; }
+        .room-panel input { flex: 1; background: #1e1f2c; border: 1px solid #2d2f3e; border-radius: 40px; padding: 12px 16px; color: white; outline: none; font-size: 16px; }
+        .room-panel button { background: #6366f1; border: none; border-radius: 40px; padding: 0 24px; color: white; font-weight: bold; cursor: pointer; }
+        .messages { flex: 1; overflow-y: auto; padding: 16px; display: flex; flex-direction: column; gap: 8px; }
+        .message { display: flex; width: 100%; animation: fadeIn 0.2s ease; }
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(5px); } to { opacity: 1; transform: translateY(0); } }
+        .my-message { justify-content: flex-end; }
+        .other-message { justify-content: flex-start; }
+        .avatar { width: 32px; height: 32px; border-radius: 50%; background: #2d2f3e; display: flex; align-items: center; justify-content: center; font-size: 12px; color: #e2e8f0; margin-right: 8px; }
+        .my-message .avatar { display: none; }
+        .bubble { max-width: 75%; padding: 8px 12px; border-radius: 18px; font-size: 15px; line-height: 1.4; word-wrap: break-word; }
+        .my-message .bubble { background: #6366f1; color: white; border-bottom-right-radius: 4px; }
+        .other-message .bubble { background: #2d2f3e; color: #e2e8f0; border-bottom-left-radius: 4px; }
+        .message-info { font-size: 10px; color: #7c8ba0; margin-top: 4px; display: flex; gap: 4px; justify-content: flex-end; }
+        .username { font-weight: bold; margin-bottom: 4px; font-size: 12px; color: #a5b4fc; }
+        .input-area { display: none; gap: 8px; padding: 12px; border-top: 1px solid #2d2f3e; background: #0f0f14; }
+        .input-area input { flex: 1; background: #1e1f2c; border: 1px solid #2d2f3e; border-radius: 40px; padding: 14px; color: white; outline: none; font-size: 16px; }
+        .input-area button { background: #6366f1; border: none; border-radius: 40px; padding: 0 24px; color: white; font-weight: bold; cursor: pointer; }
+        .status { font-size: 11px; color: #7c8ba0; text-align: center; padding: 8px; background: #0f0f14; }
+        .hidden { display: none; }
     </style>
 </head>
 <body>
 <div class="container">
-    <div class="header">
-        <h1>💬 Shadow Chat</h1>
-    </div>
+    <div class="header"><h1>💬 Shadow Chat</h1></div>
     <div class="auth-panel" id="authPanel">
         <input type="text" id="username" placeholder="Логин">
         <input type="password" id="password" placeholder="Пароль">
@@ -367,251 +106,141 @@ HTML = """
     <div class="status" id="status">Введите логин и пароль</div>
 </div>
 <script>
-    let socket = null;
-    let currentRoom = null;
-    let currentUser = null;
-    
-    const authPanel = document.getElementById('authPanel');
-    const roomPanel = document.getElementById('roomPanel');
-    const inputArea = document.getElementById('inputArea');
-    const messagesDiv = document.getElementById('messages');
-    const statusSpan = document.getElementById('status');
-    const roomCodeInput = document.getElementById('roomCode');
-    const joinBtn = document.getElementById('joinBtn');
-    const messageInput = document.getElementById('messageInput');
-    const sendBtn = document.getElementById('sendBtn');
-    
+    let socket = null, currentRoom = null, currentUser = null;
     const savedToken = localStorage.getItem('shadow_token');
     const savedUsername = localStorage.getItem('shadow_username');
-    const savedRoom = localStorage.getItem('shadow_room');
     
     function formatTime(isoString) {
         if (!isoString) return '';
-        try {
-            const date = new Date(isoString);
-            return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false });
-        } catch(e) {
-            return '';
-        }
+        try { let d = new Date(isoString); return d.toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'}); }
+        catch(e) { return ''; }
     }
     
-    function addMessage(text, isMy, username = '', readStatus = 'sent', timestamp = null) {
+    function addMessage(text, isMy, username='', readStatus='sent', timestamp=null) {
         const div = document.createElement('div');
         div.className = 'message';
-        
         if (isMy) {
             div.classList.add('my-message');
             const bubble = document.createElement('div');
             bubble.className = 'bubble';
-            
-            const textSpan = document.createElement('span');
-            textSpan.innerText = text;
-            bubble.appendChild(textSpan);
-            
+            bubble.innerText = text;
             const info = document.createElement('div');
             info.className = 'message-info';
-            const timeSpan = document.createElement('span');
-            timeSpan.innerText = formatTime(timestamp);
-            info.appendChild(timeSpan);
-            
-            const statusSpanEl = document.createElement('span');
-            statusSpanEl.innerText = readStatus === 'read' ? '✓✓' : '✓';
-            info.appendChild(statusSpanEl);
-            
+            info.innerHTML = `<span>${formatTime(timestamp)}</span><span>${readStatus === 'read' ? '✓✓' : '✓'}</span>`;
             bubble.appendChild(info);
             div.appendChild(bubble);
         } else {
             div.classList.add('other-message');
-            
             const avatar = document.createElement('div');
             avatar.className = 'avatar';
-            avatar.innerText = username.charAt(0).toUpperCase() || '?';
-            
+            avatar.innerText = (username.charAt(0) || '?').toUpperCase();
             const bubble = document.createElement('div');
             bubble.className = 'bubble';
-            
             const nameSpan = document.createElement('div');
             nameSpan.className = 'username';
-            nameSpan.innerText = escapeHtml(username);
+            nameSpan.innerText = username;
             bubble.appendChild(nameSpan);
-            
-            const textSpan = document.createElement('span');
-            textSpan.innerText = text;
-            bubble.appendChild(textSpan);
-            
+            bubble.appendChild(document.createTextNode(text));
             const info = document.createElement('div');
             info.className = 'message-info';
-            const timeSpan = document.createElement('span');
-            timeSpan.innerText = formatTime(timestamp);
-            info.appendChild(timeSpan);
-            
+            info.innerHTML = `<span>${formatTime(timestamp)}</span>`;
             bubble.appendChild(info);
-            
             div.appendChild(avatar);
             div.appendChild(bubble);
         }
-        
-        messagesDiv.appendChild(div);
-        messagesDiv.scrollTop = messagesDiv.scrollHeight;
-    }
-    
-    function escapeHtml(str) {
-        if (!str) return '';
-        return String(str).replace(/[&<>]/g, function(m) {
-            if (m === '&') return '&amp;';
-            if (m === '<') return '&lt;';
-            if (m === '>') return '&gt;';
-            return m;
-        });
+        document.getElementById('messages').appendChild(div);
+        document.getElementById('messages').scrollTop = document.getElementById('messages').scrollHeight;
     }
     
     function loadHistory(history) {
-        messagesDiv.innerHTML = '';
-        for (let msg of history) {
-            const isMy = (msg.username === currentUser);
-            addMessage(msg.text, isMy, msg.username, msg.read_status, msg.timestamp);
-        }
+        const container = document.getElementById('messages');
+        container.innerHTML = '';
+        for (let msg of history) { addMessage(msg.text, msg.username === currentUser, msg.username, msg.read_status, msg.timestamp); }
     }
     
     async function apiRequest(endpoint, data) {
-        try {
-            const res = await fetch(endpoint, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(data)
-            });
-            return await res.json();
-        } catch(e) {
-            return { success: false, error: 'Ошибка' };
-        }
+        let res = await fetch(endpoint, { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(data) });
+        return await res.json();
     }
     
     async function autoLogin() {
         if (!savedToken || !savedUsername) return false;
-        
-        const result = await apiRequest('/auto_login', { token: savedToken });
+        let result = await apiRequest('/auto_login', {token: savedToken});
         if (result.success) {
             currentUser = savedUsername;
-            authPanel.style.display = 'none';
-            roomPanel.style.display = 'flex';
-            statusSpan.innerText = '✅ Введите код комнаты';
-            
-            if (savedRoom) {
-                roomCodeInput.value = savedRoom;
-                setTimeout(() => {
-                    connectToRoom(savedRoom);
-                }, 500);
-            }
+            document.getElementById('authPanel').style.display = 'none';
+            document.getElementById('roomPanel').style.display = 'flex';
+            document.getElementById('status').innerText = '✅ Введите код комнаты';
             return true;
         } else {
             localStorage.removeItem('shadow_token');
             localStorage.removeItem('shadow_username');
-            localStorage.removeItem('shadow_room');
             return false;
         }
     }
     
     document.getElementById('loginBtn').onclick = async () => {
-        const username = document.getElementById('username').value.trim();
-        const password = document.getElementById('password').value.trim();
-        if (!username || !password) {
-            statusSpan.innerText = '❌ Введите логин и пароль';
-            return;
-        }
-        const result = await apiRequest('/login', { username, password });
+        let username = document.getElementById('username').value.trim();
+        let password = document.getElementById('password').value.trim();
+        if (!username || !password) { document.getElementById('status').innerText = '❌ Введите логин и пароль'; return; }
+        let result = await apiRequest('/login', {username, password});
         if (result.success) {
             currentUser = username;
             localStorage.setItem('shadow_token', result.token);
             localStorage.setItem('shadow_username', username);
-            authPanel.style.display = 'none';
-            roomPanel.style.display = 'flex';
-            statusSpan.innerText = '✅ Введите код комнаты';
-        } else {
-            statusSpan.innerText = `❌ ${result.error}`;
-        }
+            document.getElementById('authPanel').style.display = 'none';
+            document.getElementById('roomPanel').style.display = 'flex';
+            document.getElementById('status').innerText = '✅ Введите код комнаты';
+        } else { document.getElementById('status').innerText = `❌ ${result.error}`; }
     };
     
     document.getElementById('registerBtn').onclick = async () => {
-        const username = document.getElementById('username').value.trim();
-        const password = document.getElementById('password').value.trim();
-        if (!username || !password) {
-            statusSpan.innerText = '❌ Введите логин и пароль';
-            return;
-        }
-        const result = await apiRequest('/register', { username, password });
+        let username = document.getElementById('username').value.trim();
+        let password = document.getElementById('password').value.trim();
+        if (!username || !password) { document.getElementById('status').innerText = '❌ Введите логин и пароль'; return; }
+        let result = await apiRequest('/register', {username, password});
         if (result.success) {
-            statusSpan.innerText = '✅ Регистрация успешна! Теперь войдите.';
+            document.getElementById('status').innerText = '✅ Регистрация успешна! Теперь войдите.';
             document.getElementById('username').value = '';
             document.getElementById('password').value = '';
-        } else {
-            statusSpan.innerText = `❌ ${result.error}`;
-        }
+        } else { document.getElementById('status').innerText = `❌ ${result.error}`; }
     };
     
     function connectToRoom(room) {
         if (socket) socket.close();
-        
         localStorage.setItem('shadow_room', room);
-        
         socket = io();
-        
         socket.on('connect', () => {
-            socket.emit('join', { room, username: currentUser });
+            socket.emit('join', {room, username: currentUser});
             currentRoom = room;
-            statusSpan.innerText = `✅ Комната: ${room}`;
-            inputArea.style.display = 'flex';
+            document.getElementById('status').innerText = `✅ Комната: ${room}`;
+            document.getElementById('inputArea').style.display = 'flex';
         });
-        
-        socket.on('history', (history) => {
-            loadHistory(history);
-        });
-        
+        socket.on('history', (history) => { loadHistory(history); });
         socket.on('new_message', (data) => {
-            const isMy = (data.username === currentUser);
+            let isMy = (data.username === currentUser);
             addMessage(data.text, isMy, data.username, data.read_status, data.timestamp);
-            
-            if (!isMy && currentRoom === data.room) {
-                socket.emit('mark_read', { room: data.room });
-            }
+            if (!isMy && currentRoom === data.room) { socket.emit('mark_read', {room: data.room}); }
         });
-        
-        socket.on('read_receipt', ({ room }) => {
-            if (room === currentRoom) {
-                document.querySelectorAll('.my-message .message-info').forEach(info => {
-                    const s = info.querySelector('span:last-child');
-                    if (s && s.innerText === '✓') s.innerText = '✓✓';
-                });
-            }
+        socket.on('read_receipt', ({room}) => {
+            if (room === currentRoom) { document.querySelectorAll('.my-message .message-info span:last-child').forEach(el => { if(el.innerText === '✓') el.innerText = '✓✓'; }); }
         });
-        
-        socket.on('disconnect', () => {
-            statusSpan.innerText = '⚠️ Потеря соединения';
-        });
+        socket.on('disconnect', () => { document.getElementById('status').innerText = '⚠️ Потеря соединения'; });
     }
     
-    joinBtn.onclick = () => {
-        const room = roomCodeInput.value.trim();
-        if (!room) {
-            statusSpan.innerText = '❌ Введите код комнаты';
-            return;
-        }
+    document.getElementById('joinBtn').onclick = () => {
+        let room = document.getElementById('roomCode').value.trim();
+        if (!room) { document.getElementById('status').innerText = '❌ Введите код комнаты'; return; }
         connectToRoom(room);
     };
-    
-    sendBtn.onclick = () => {
-        const text = messageInput.value.trim();
+    document.getElementById('sendBtn').onclick = () => {
+        let text = document.getElementById('messageInput').value.trim();
         if (text && socket && currentRoom) {
-            socket.emit('message', { room: currentRoom, text, username: currentUser });
-            messageInput.value = '';
+            socket.emit('message', {room: currentRoom, text, username: currentUser});
+            document.getElementById('messageInput').value = '';
         }
     };
-    
-    messageInput.addEventListener('keypress', (e) => {
-        if (e.key === 'Enter') {
-            e.preventDefault();
-            sendBtn.click();
-        }
-    });
+    document.getElementById('messageInput').addEventListener('keypress', (e) => { if(e.key === 'Enter') document.getElementById('sendBtn').click(); });
     
     autoLogin();
 </script>
@@ -631,18 +260,12 @@ def register():
     if not username or not password:
         return {'success': False, 'error': 'Введите логин и пароль'}
     
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
-    c.execute('SELECT username FROM users WHERE username = ?', (username,))
-    if c.fetchone():
-        conn.close()
+    existing = supabase.table('users').select('username').eq('username', username).execute()
+    if existing.data:
         return {'success': False, 'error': 'Пользователь уже существует'}
     
-    password_hash = hash_password(password)
-    c.execute('INSERT INTO users (username, password_hash, created_at) VALUES (?, ?, ?)',
-              (username, password_hash, datetime.now()))
-    conn.commit()
-    conn.close()
+    password_hash = hashlib.sha256(password.encode()).hexdigest()
+    supabase.table('users').insert({'username': username, 'password_hash': password_hash, 'created_at': datetime.now().isoformat()}).execute()
     return {'success': True}
 
 @app.route('/login', methods=['POST'])
@@ -653,25 +276,13 @@ def login():
     if not username or not password:
         return {'success': False, 'error': 'Введите логин и пароль'}
     
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
-    c.execute('SELECT password_hash FROM users WHERE username = ?', (username,))
-    row = c.fetchone()
-    conn.close()
-    
-    if not row or row[0] != hash_password(password):
+    res = supabase.table('users').select('password_hash').eq('username', username).execute()
+    if not res.data or res.data[0]['password_hash'] != hashlib.sha256(password.encode()).hexdigest():
         return {'success': False, 'error': 'Неверный логин или пароль'}
     
     token = secrets.token_urlsafe(32)
-    expires_at = datetime.now() + timedelta(days=365*50)  # 50 лет
-    
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
-    c.execute('INSERT OR REPLACE INTO sessions (token, username, expires_at) VALUES (?, ?, ?)',
-              (token, username, expires_at))
-    conn.commit()
-    conn.close()
-    
+    expires_at = (datetime.now() + timedelta(days=365*50)).isoformat()
+    supabase.table('sessions').upsert({'token': token, 'username': username, 'expires_at': expires_at}).execute()
     return {'success': True, 'token': token}
 
 @app.route('/auto_login', methods=['POST'])
@@ -681,20 +292,14 @@ def auto_login():
     if not token:
         return {'success': False, 'error': 'Нет токена'}
     
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
-    c.execute('SELECT username, expires_at FROM sessions WHERE token = ?', (token,))
-    row = c.fetchone()
-    conn.close()
-    
-    if not row:
+    res = supabase.table('sessions').select('username, expires_at').eq('token', token).execute()
+    if not res.data:
         return {'success': False, 'error': 'Токен не найден'}
     
-    username, expires_at = row
-    if datetime.now() > expires_at:
+    row = res.data[0]
+    if datetime.now() > datetime.fromisoformat(row['expires_at'].replace('Z', '+00:00')):
         return {'success': False, 'error': 'Токен истёк'}
-    
-    return {'success': True, 'username': username}
+    return {'success': True, 'username': row['username']}
 
 @socketio.on('join')
 def handle_join(data):
@@ -702,22 +307,9 @@ def handle_join(data):
     username = data['username']
     join_room(room)
     
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
-    c.execute('SELECT username, text, timestamp, read_status FROM messages WHERE room = ? ORDER BY timestamp', (room,))
-    rows = c.fetchall()
-    history = []
-    for r in rows:
-        ts = r[2].isoformat() if hasattr(r[2], 'isoformat') else str(r[2])
-        history.append({'username': r[0], 'text': r[1], 'timestamp': ts, 'read_status': r[3]})
-    conn.close()
-    
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
-    c.execute('UPDATE messages SET read_status = "read" WHERE room = ? AND username != ? AND read_status = "sent"', (room, username))
-    conn.commit()
-    conn.close()
-    
+    res = supabase.table('messages').select('username, text, timestamp, read_status').eq('room', room).order('timestamp').execute()
+    history = [{'username': r['username'], 'text': r['text'], 'timestamp': r['timestamp'], 'read_status': r['read_status']} for r in res.data]
+    supabase.table('messages').update({'read_status': 'read'}).eq('room', room).neq('username', username).execute()
     emit('history', history)
     emit('read_receipt', {'room': room}, to=room)
 
@@ -726,33 +318,17 @@ def handle_message(data):
     room = data['room']
     text = data['text']
     username = data.get('username')
-    if not username:
+    if not username or not text:
         return
-    
-    timestamp = datetime.now()
-    
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
-    c.execute('INSERT INTO messages (room, username, text, timestamp, read_status) VALUES (?, ?, ?, ?, ?)',
-              (room, username, text, timestamp, 'sent'))
-    conn.commit()
-    conn.close()
-    
-    emit('new_message', {'username': username, 'text': text, 'read_status': 'sent', 'timestamp': timestamp.isoformat()}, to=room)
+    supabase.table('messages').insert({'room': room, 'username': username, 'text': text, 'timestamp': datetime.now().isoformat(), 'read_status': 'sent'}).execute()
+    emit('new_message', {'username': username, 'text': text, 'read_status': 'sent', 'timestamp': datetime.now().isoformat()}, to=room)
 
 @socketio.on('mark_read')
 def handle_mark_read(data):
     room = data['room']
-    
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
-    c.execute('UPDATE messages SET read_status = "read" WHERE room = ? AND read_status = "sent"', (room,))
-    conn.commit()
-    conn.close()
-    
+    supabase.table('messages').update({'read_status': 'read'}).eq('room', room).eq('read_status', 'sent').execute()
     emit('read_receipt', {'room': room}, to=room)
 
 if __name__ == '__main__':
-    init_db()
     port = int(os.environ.get('PORT', 8080))
-    socketio.run(app, host='0.0.0.0', port=port)
+    socketio.run(app, host='0.0.0.0', port=port, debug=False)
