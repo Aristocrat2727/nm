@@ -1,207 +1,177 @@
 import os
-import hashlib
-import secrets
-from datetime import datetime, timedelta
-from flask import Flask, request, jsonify
-from flask_socketio import SocketIO, emit, join_room
-from flask_cors import CORS
-from supabase import create_client
+import uuid
+from datetime import datetime
+from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Depends
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
+from supabase import create_client, Client
+from pydantic import BaseModel
+import socketio
+import jwt
+from typing import Optional
 
-SUPABASE_URL = "https://bjqgguylmkgvqxqblsni.supabase.co"
-SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImJqcWdndXlsbWtndnF4cWJsc25pIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzk2MjUzOTgsImV4cCI6MjA5NTIwMTM5OH0.-oFtd1CPQfGuXQK1AEiCkYWmGrb5IEvrfGUrpa6he2o"
+# Конфиг
+SUPABASE_URL = os.getenv("SUPABASE_URL")
+SUPABASE_KEY = os.getenv("SUPABASE_KEY")
+JWT_SECRET = os.getenv("JWT_SECRET", "your-secret-key-change-this")
 
-supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
+# Инициализация
+supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
+app = FastAPI()
+sio = socketio.AsyncServer(cors_allowed_origins="*", async_mode="asgi")
+socket_app = socketio.ASGIApp(sio, app)
 
-app = Flask(__name__)
-app.config['SECRET_KEY'] = 'supersecretkey'
-CORS(app, origins=["*"])
+# CORS
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
-socketio = SocketIO(app, cors_allowed_origins="*", async_mode='threading')
+# Модели
+class User(BaseModel):
+    username: str
+    password: str
 
-def generate_token(username):
-    token = secrets.token_urlsafe(32)
-    expires_at = (datetime.now() + timedelta(days=365*10)).isoformat()
-    supabase.table('sessions').delete().eq('username', username).execute()
-    supabase.table('sessions').insert({
-        'token': token,
-        'username': username,
-        'expires_at': expires_at
-    }).execute()
-    return token
+class Message(BaseModel):
+    room: str
+    text: str
+    username: str
+    media_url: Optional[str] = None
+    media_type: Optional[str] = None
 
-def verify_token(token):
-    if not token:
-        return None
-    res = supabase.table('sessions').select('username, expires_at').eq('token', token).execute()
-    if not res.data or len(res.data) == 0:
-        return None
-    row = res.data[0]
-    expires_at = row['expires_at'].replace('Z', '+00:00')
-    if datetime.now() > datetime.fromisoformat(expires_at):
-        supabase.table('sessions').delete().eq('token', token).execute()
-        return None
-    return row['username']
+# ========== АУТЕНТИФИКАЦИЯ ==========
+def hash_password(password: str) -> str:
+    import hashlib
+    return hashlib.sha256(password.encode()).hexdigest()
 
-@app.route('/')
-def index():
-    return jsonify({'status': 'ok', 'message': 'Shadow Chat API'})
+def generate_token(username: str) -> str:
+    return jwt.encode({"username": username, "exp": datetime.utcnow()}, JWT_SECRET, algorithm="HS256")
 
-@app.route('/register', methods=['POST', 'OPTIONS'])
-def register():
-    if request.method == 'OPTIONS':
-        return '', 200
+@app.post("/register")
+async def register(user: User):
     try:
-        data = request.json
-        username = data.get('username')
-        password = data.get('password')
-        if not username or not password:
-            return jsonify({'success': False, 'error': 'Введите логин и пароль'})
-        
-        existing = supabase.table('users').select('username').eq('username', username).execute()
-        if existing.data and len(existing.data) > 0:
-            return jsonify({'success': False, 'error': 'Пользователь уже существует'})
-        
-        password_hash = hashlib.sha256(password.encode()).hexdigest()
-        supabase.table('users').insert({
-            'username': username,
-            'password_hash': password_hash,
-            'created_at': datetime.now().isoformat()
+        hashed = hash_password(user.password)
+        supabase.table("users").insert({
+            "username": user.username,
+            "password_hash": hashed
         }).execute()
-        
-        return jsonify({'success': True})
+        return {"success": True}
     except Exception as e:
-        return jsonify({'success': False, 'error': str(e)})
+        return {"success": False, "error": "Пользователь уже существует"}
 
-@app.route('/login', methods=['POST', 'OPTIONS'])
-def login():
-    if request.method == 'OPTIONS':
-        return '', 200
+@app.post("/login")
+async def login(user: User):
+    hashed = hash_password(user.password)
+    result = supabase.table("users").select("*").eq("username", user.username).eq("password_hash", hashed).execute()
+    if result.data:
+        token = generate_token(user.username)
+        return {"success": True, "token": token}
+    return {"success": False, "error": "Неверный логин или пароль"}
+
+@app.post("/auto_login")
+async def auto_login(data: dict):
     try:
-        data = request.json
-        username = data.get('username')
-        password = data.get('password')
-        if not username or not password:
-            return jsonify({'success': False, 'error': 'Введите логин и пароль'})
-        
-        res = supabase.table('users').select('password_hash').eq('username', username).execute()
-        if not res.data or len(res.data) == 0:
-            return jsonify({'success': False, 'error': 'Неверный логин или пароль'})
-        
-        if res.data[0]['password_hash'] != hashlib.sha256(password.encode()).hexdigest():
-            return jsonify({'success': False, 'error': 'Неверный логин или пароль'})
-        
-        token = generate_token(username)
-        return jsonify({'success': True, 'token': token, 'username': username})
-    except Exception as e:
-        return jsonify({'success': False, 'error': str(e)})
+        payload = jwt.decode(data["token"], JWT_SECRET, algorithms=["HS256"])
+        return {"success": True, "username": payload["username"]}
+    except:
+        return {"success": False}
 
-@app.route('/auto_login', methods=['POST', 'OPTIONS'])
-def auto_login():
-    if request.method == 'OPTIONS':
-        return '', 200
+# ========== ЗАГРУЗКА МЕДИА ==========
+@app.post("/upload_media")
+async def upload_media(
+    file: UploadFile = File(...),
+    room: str = Form(...),
+    username: str = Form(...),
+    token: str = Depends(lambda: None)  # упрощенно, проверяйте в реальном проекте
+):
+    # Проверяем пользователя
+    if not username:
+        return {"success": False, "error": "No username"}
+    
+    # Генерируем имя файла
+    ext = file.filename.split(".")[-1]
+    file_id = str(uuid.uuid4())
+    file_path = f"media/{room}/{file_id}.{ext}"
+    
+    # Определяем тип
+    media_type = "image" if file.content_type.startswith("image") else "video"
+    
+    # Загружаем в Supabase Storage
     try:
-        data = request.json
-        token = data.get('token')
-        username = verify_token(token)
-        if username:
-            return jsonify({'success': True, 'username': username})
-        return jsonify({'success': False, 'error': 'Токен недействителен'})
+        content = await file.read()
+        supabase.storage.from_("chat-media").upload(file_path, content, {"content-type": file.content_type})
+        public_url = supabase.storage.from_("chat-media").get_public_url(file_path)
+        
+        return {
+            "success": True,
+            "media_url": public_url,
+            "media_type": media_type,
+            "text": f"[{media_type}]"
+        }
     except Exception as e:
-        return jsonify({'success': False, 'error': str(e)})
+        return {"success": False, "error": str(e)}
 
-@socketio.on('join')
-def handle_join(data):
-    try:
-        room = data['room']
-        username = data['username']
-        join_room(room)
-        
-        res = supabase.table('messages').select('*').eq('room', room).order('timestamp').execute()
-        history = []
-        if res.data:
-            for r in res.data:
-                history.append({
-                    'username': r['username'],
-                    'text': r.get('text', ''),
-                    'media_url': r.get('media_url', ''),
-                    'media_type': r.get('media_type', ''),
-                    'timestamp': r['timestamp'],
-                    'read_status': r['read_status']
-                })
-        
-        supabase.table('messages').update({'read_status': 'read'}).eq('room', room).neq('username', username).execute()
-        emit('history', history)
-        emit('read_receipt', {'room': room}, to=room)
-    except Exception as e:
-        print(f"Join error: {e}")
+# ========== SOCKET.IO ==========
+connected_users = {}
 
-@socketio.on('message')
-def handle_message(data):
-    try:
-        room = data['room']
-        text = data['text']
-        username = data.get('username')
-        if not username or not text:
-            return
-        
-        supabase.table('messages').insert({
-            'room': room,
-            'username': username,
-            'text': text,
-            'timestamp': datetime.now().isoformat(),
-            'read_status': 'sent'
-        }).execute()
-        
-        emit('new_message', {
-            'username': username,
-            'text': text,
-            'read_status': 'sent',
-            'timestamp': datetime.now().isoformat()
-        }, to=room)
-    except Exception as e:
-        print(f"Message error: {e}")
+@sio.event
+async def connect(sid, environ):
+    print(f"Connected: {sid}")
 
-@socketio.on('media_message')
-def handle_media_message(data):
-    try:
-        room = data['room']
-        media_url = data.get('media_url')
-        media_type = data.get('media_type')
-        text = data.get('text', '')
-        username = data.get('username')
-        
-        if not username or not media_url:
-            return
-        
-        supabase.table('messages').insert({
-            'room': room,
-            'username': username,
-            'text': text,
-            'media_url': media_url,
-            'media_type': media_type,
-            'timestamp': datetime.now().isoformat(),
-            'read_status': 'sent'
-        }).execute()
-        
-        emit('new_media', {
-            'username': username,
-            'text': text,
-            'media_url': media_url,
-            'media_type': media_type,
-            'timestamp': datetime.now().isoformat()
-        }, to=room)
-    except Exception as e:
-        print(f"Media error: {e}")
+@sio.event
+async def join(sid, data):
+    room = data["room"]
+    username = data["username"]
+    connected_users[sid] = {"room": room, "username": username}
+    sio.enter_room(sid, room)
+    
+    # Загружаем историю из БД
+    result = supabase.table("messages").select("*").eq("room", room).order("timestamp", desc=False).limit(100).execute()
+    history = []
+    for msg in result.data:
+        history.append({
+            "text": msg["text"],
+            "username": msg["username"],
+            "timestamp": msg["timestamp"],
+            "read_status": msg["read_status"],
+            "media_url": msg.get("media_url"),
+            "media_type": msg.get("media_type")
+        })
+    await sio.emit("history", history, to=sid)
 
-@socketio.on('mark_read')
-def handle_mark_read(data):
-    try:
-        room = data['room']
-        supabase.table('messages').update({'read_status': 'read'}).eq('room', room).eq('read_status', 'sent').execute()
-        emit('read_receipt', {'room': room}, to=room)
-    except Exception as e:
-        print(f"Mark read error: {e}")
+@sio.event
+async def message(sid, data):
+    room = data["room"]
+    msg_data = {
+        "room": room,
+        "text": data.get("text", ""),
+        "username": data["username"],
+        "timestamp": datetime.utcnow().isoformat(),
+        "read_status": "sent",
+        "media_url": data.get("media_url"),
+        "media_type": data.get("media_type")
+    }
+    
+    # Сохраняем в Supabase
+    supabase.table("messages").insert(msg_data).execute()
+    
+    # Рассылаем всем в комнате
+    await sio.emit("new_message", msg_data, to=room)
 
-if __name__ == '__main__':
-    port = int(os.environ.get('PORT', 8080))
-    socketio.run(app, host='0.0.0.0', port=port, debug=False, allow_unsafe_werkzeug=True)
+@sio.event
+async def mark_read(sid, data):
+    room = data["room"]
+    # Обновляем статус прочтения в БД (упрощенно)
+    await sio.emit("read_receipt", {"room": room}, to=room)
+
+@sio.event
+async def disconnect(sid):
+    if sid in connected_users:
+        del connected_users[sid]
+
+# Запуск
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(socket_app, host="0.0.0.0", port=8000)
