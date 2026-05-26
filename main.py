@@ -170,8 +170,6 @@ def handle_media_message(data):
         text = data.get('text', '')
         username = data.get('username')
         
-        print(f"Media received: {username} -> {room} ({media_type})")
-        
         if not username or not media_url:
             return
         
@@ -192,8 +190,6 @@ def handle_media_message(data):
             'media_type': media_type,
             'timestamp': datetime.now().isoformat()
         }, to=room)
-        
-        print(f"Media sent to room: {room}")
     except Exception as e:
         print(f"Media error: {e}")
 
