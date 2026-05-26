@@ -25,8 +25,7 @@ def generate_token(username):
     supabase.table('sessions').insert({
         'token': token,
         'username': username,
-        'expires_at': expires_at,
-        'created_at': datetime.now().isoformat()
+        'expires_at': expires_at
     }).execute()
     return token
 
@@ -110,19 +109,6 @@ def auto_login():
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)})
 
-@app.route('/logout', methods=['POST', 'OPTIONS'])
-def logout():
-    if request.method == 'OPTIONS':
-        return '', 200
-    try:
-        data = request.json
-        token = data.get('token')
-        if token:
-            supabase.table('sessions').delete().eq('token', token).execute()
-        return jsonify({'success': True})
-    except Exception as e:
-        return jsonify({'success': False, 'error': str(e)})
-
 @socketio.on('join')
 def handle_join(data):
     try:
@@ -184,6 +170,8 @@ def handle_media_message(data):
         text = data.get('text', '')
         username = data.get('username')
         
+        print(f"Media received: {username} -> {room} ({media_type})")
+        
         if not username or not media_url:
             return
         
@@ -204,6 +192,8 @@ def handle_media_message(data):
             'media_type': media_type,
             'timestamp': datetime.now().isoformat()
         }, to=room)
+        
+        print(f"Media sent to room: {room}")
     except Exception as e:
         print(f"Media error: {e}")
 
