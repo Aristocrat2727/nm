@@ -4,7 +4,6 @@ import secrets
 from datetime import datetime, timedelta
 from flask import Flask, request, jsonify
 from flask_socketio import SocketIO, emit, join_room
-from flask_cors import CORS
 from supabase import create_client
 
 # ========== ТВОИ ДАННЫЕ ИЗ SUPABASE ==========
@@ -16,9 +15,11 @@ supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 app = Flask(__name__)
 app.config['SECRET_KEY'] = 'supersecretkey'
-CORS(app, resources={r"/*": {"origins": "*"}})
+socketio = SocketIO(app, cors_allowed_origins="*", async_mode='threading')
 
-socketio = SocketIO(app, cors_allowed_origins="*", async_mode='eventlet')
+@app.route('/')
+def index():
+    return jsonify({'status': 'ok', 'message': 'Shadow Chat API is running!'})
 
 @app.route('/register', methods=['POST'])
 def register():
@@ -65,8 +66,13 @@ def auto_login():
         return jsonify({'success': False, 'error': 'Токен не найден'})
     
     row = res.data[0]
-    if datetime.now() > datetime.fromisoformat(row['expires_at'].replace('Z', '+00:00')):
-        return jsonify({'success': False, 'error': 'Токен истёк'})
+    try:
+        expires_at = row['expires_at'].replace('Z', '+00:00')
+        if datetime.now() > datetime.fromisoformat(expires_at):
+            return jsonify({'success': False, 'error': 'Токен истёк'})
+    except:
+        pass
+    
     return jsonify({'success': True, 'username': row['username']})
 
 @socketio.on('join')
@@ -99,4 +105,4 @@ def handle_mark_read(data):
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 8080))
-    socketio.run(app, host='0.0.0.0', port=port, debug=False)
+    socketio.run(app, host='0.0.0.0', port=port, debug=False, allow_unsafe_werkzeug=True)
