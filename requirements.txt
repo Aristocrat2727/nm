@@ -5,3 +5,4 @@ simple-websocket
 python-engineio
 python-socketio
 eventlet
+Flask-Cors
