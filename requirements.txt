@@ -1,6 +1,5 @@
-fastapi==0.104.1
-uvicorn[standard]==0.24.0
+Flask==2.3.3
+Flask-SocketIO==5.3.4
+Flask-Cors==4.0.0
 python-socketio==5.9.0
-supabase==2.0.4
-python-jose[cryptography]==3.3.0
-python-multipart==0.0.6
+supabase==1.2.0
